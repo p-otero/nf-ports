@@ -7,7 +7,7 @@
     "wtp": "src/cli.ts"
   },
   "scripts": {
-    "lint": "oxlint --deny-warnings src test",
+    "lint": "oxlint --deny-warnings src test preload",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "verify": "bun run lint && bun run typecheck && bun run test"

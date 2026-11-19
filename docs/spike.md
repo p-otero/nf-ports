@@ -1,293 +1,349 @@
-# Spike NF-051-A1: per-worktree ports and names through portless
+# Spike NF-051: per-worktree ports and names through portless
 
-Date: 2026-11-19. Machine: Windows 11 Pro 10.0.26200, non-admin user, Git Bash + PowerShell 5.1.
+Attempts: A1 and A2, 2026-11-19. Machine: Windows 11 Pro 10.0.26200, non-admin user,
+Git Bash and PowerShell 5.1.
+
 Versions: portless 0.18.1 (npm, global), Node 24.13.0, Bun 1.4.4, Vite 7.2.2,
-@playwright/test 1.56.1 (Chromium 141), Docker Engine 29.1.3 inside WSL2 Ubuntu-24.04
-(NAT networking), image `mcr.microsoft.com/playwright:v1.56.1-noble`, T3 Code
+@playwright/test 1.56.1 (Chromium 141), Docker Engine 29.1.3 inside WSL2 Ubuntu-24.04 (NAT
+networking), image `mcr.microsoft.com/playwright:v1.56.1-noble`, T3 Code
 0.1.10-nightly.20261115.4723.
 
-Fixture: `C:\Desarrollo\scratch-portless-fixture` ("Lumen Notes", invented). npm workspaces
-`apps/web` (Vite, `.env` `PORT=5173`, `VITE_API_URL`) and `apps/api` (Node `http`, `.env`
-`PORT=8787`), Playwright at the root with `baseURL = process.env.BASE_URL ?? localhost` and a
-`webServer` that is skipped when `BASE_URL` is set. Worktrees `.worktrees/alpha`
-(`feat/alpha-search`) and `.worktrees/beta` (`fix/beta-sync`). A trimmed copy lives in
-`test/fixtures/lumen-notes`.
+Fixture: `C:\Desarrollo\scratch-portless-fixture` ("Lumen Notes", invented names).
+- npm workspaces `apps/web` (Vite; `.env` has `PORT=5173` and `VITE_API_URL`) and `apps/api`
+  (Node `http`; `.env` has `PORT=8787`).
+- Playwright at the root, with `baseURL = process.env.BASE_URL ?? localhost` and a `webServer`
+  that is skipped when `BASE_URL` is set.
+- Worktrees `.worktrees/alpha` (`feat/alpha-search`) and `.worktrees/beta` (`fix/beta-sync`).
+- A trimmed copy lives in `test/fixtures/lumen-notes`.
 
-## 1. portless on Windows: what was checked
+## Summary
 
-| Claim from the brief | Verified against 0.18.1 docs + `dist/cli.js` | Result on this machine |
+| Question | Answer |
+| --- | --- |
+| Port and DNS per worktree | portless `run --name <app>` per stack, with `PORTLESS_PREFIX` set to the whole branch: `feat/alpha-search` → `https://feat-alpha-search.lumen.localhost` |
+| Host HTTPS with the CA trusted | Verified in both worktrees at once, without `E2E_IGNORE_HTTPS_ERRORS` |
+| Default e2e | On the host: about 1.9 s wall time for the fixture suite, and headed/UI mode works |
+| `e2e --docker` | Opt-in. Works with real CA trust inside the container; about 17.9 s warm and 47 s cold |
+| Node server-to-server by name | Use the `--import` DNS preload (shipped in `preload/`), plus the CA that portless already injects |
+| T3 | `wtp t3 scripts` writes or merges `t3.json` at the repo root by script name (implemented) |
+| Per-worktree preview URL | No placeholder support in this T3 build. Closest working setups are in §5 |
+
+## 1. portless on Windows
+
+| Claim from the brief | What 0.18.1 docs and `dist/cli.js` say | Result on this machine |
 | --- | --- | --- |
-| Random `PORT` 4000–4999 per run | `MIN_APP_PORT=4000`, `MAX_APP_PORT=4999`, 50 attempts, blocked-port list | Yes: 4256, 4641, 4750, 4092, 4396… |
-| Worktree subdomain from branch | Last `/` segment of the branch; `worktree.prefix: "branch"` or `worktree.hostnameTemplate` change it; `--prefix`/`PORTLESS_PREFIX` override | `feat/alpha-search` → `alpha-search.lumen.localhost`; main checkout → `lumen.localhost` |
-| `portless.json` apps map | Exists (`apps`, `name`, `script`, `appPort`, `proxy`, `worktree`, `turbo`) | Only honoured from the **root** run; see bug 2 |
-| HTTPS on 443 with local CA | Yes, HTTP/2, CA `~/.portless/ca.pem`, 10-year CA, 1-year leaf | Proxy binds 443 **without admin** (Windows has no privileged ports; code skips sudo when `isWindows`) |
-| `--no-tls` | Plain HTTP on 80 | Works, no admin |
-| `--unprivileged` | "Binds without sudo, installs nothing, never writes the hosts file"; HTTP on 80 unless `--https`. Sticky until `PORTLESS_UNPRIVILEGED=0` | On Windows it equals `--no-tls` minus hosts writes |
-| `hosts sync` | Writes a managed block in the hosts file | Fails: `Failed to update hosts file (run as Administrator).` (exit 1) |
-| `portless get` | `--json` gives `{name, hostname, url}`, worktree-aware | Works; this is the URL source for e2e |
-| `mcp` | stdio MCP; profiles core/proxy/diagnostics/all; **does not start dev servers** | Help verified |
-| Nothing for e2e | Confirmed: no e2e command, no env beyond `PORTLESS_URL`, `PORT`, `HOST`, `NODE_EXTRA_CA_CERTS`, `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS` | — |
+| Random `PORT` 4000–4999 per run | `MIN_APP_PORT=4000`, `MAX_APP_PORT=4999`, 50 attempts, blocked-port list | Yes |
+| Worktree subdomain from branch | Last `/` segment by default; `worktree.prefix: "branch"` uses the whole branch; `PORTLESS_PREFIX`/`--prefix` override. `main`/`master` get no prefix | `PORTLESS_PREFIX=feat-alpha-search` → `feat-alpha-search.lumen.localhost` |
+| `portless.json` apps map | Exists | Only honoured from the **root** run; see bug 2 |
+| HTTPS on 443 with local CA | HTTP/2, CA `~/.portless/ca.pem` | Binds 443 **without admin**; the code skips sudo on Windows |
+| `--no-tls` / `--unprivileged` | HTTP on 80; unprivileged also never writes hosts and is sticky until `PORTLESS_UNPRIVILEGED=0` | Both work without admin |
+| `hosts sync` | Managed block in the hosts file | `Failed to update hosts file (run as Administrator).` |
+| `get`, `list`, `doctor` | `--json` output, exit codes 0/1/2 | Work |
+| `mcp` | stdio, does not start dev servers | — |
+| Nothing for e2e | Confirmed | — |
 
-Extra facts found in the source:
+Injected into every app: `PORT`, `HOST=127.0.0.1`, `PORTLESS_URL`, and with TLS
+`NODE_EXTRA_CA_CERTS=~/.portless/ca.pem`. Vite, Astro, Angular, Expo, Wrangler, react-router,
+rsbuild and vitepress also get `--port N --strictPort --host 127.0.0.1`.
 
-- Vite, Astro, Angular, Expo, Wrangler, react-router, rsbuild, vitepress get `--port N
-  --strictPort --host 127.0.0.1` appended (`FRAMEWORKS_NEEDING_PORT`); others only get `PORT`.
-- With TLS on, portless injects `NODE_EXTRA_CA_CERTS=~/.portless/ca.pem` into the app, so
-  server-side Node fetches to other `*.localhost` HTTPS routes trust the CA.
-- Routes live in `~/.portless/routes.json` and survive proxy restarts and mode switches.
-- Library exports (`portless` main) cover `RouteStore`, proxy and hosts primitives, but **not**
-  worktree naming or `run`; those exist only in the CLI.
+### CA trust (A2: verified)
 
-### CA trust
+Pablo accepted the dialog. `certutil -user -store Root` shows `CN=portless Local CA`
+(serial `685a006a…fab6`, valid until 2036-11-16). `portless doctor` reports
+`ok Local CA is trusted by the OS trust store`.
 
-`portless proxy start` and `portless trust` run `certutil -addstore -user Root ca.pem`. Adding to
-the *user* Root store needs no admin but always shows a Windows "Security Warning" dialog, and
-portless kills certutil after **30 s** (`WINDOWS_COMMAND_TIMEOUT_MS`): both attempts ended with
-`The trust command timed out. Try: portless trust`. While the CA is untrusted, **every
-`portless run` retries trust and opens another dialog**, which blocks the run until it times out
-(`Failed to trust CA: Command failed: certutil -addstore …`). A plain
-`certutil -addstore -user Root %USERPROFILE%\.portless\ca.pem` with no timeout was left waiting
-for the click; at the time of writing it was still unanswered, so OS-level trust on the host is
-**not verified**. Implication: the tool's `doctor`/`setup` must run trust once, interactively,
-without a timeout, and `up` must start the proxy with `--skip-trust` so it never pops dialogs.
+How we got there: `portless trust` runs `certutil -addstore -user Root`. That always opens a
+Windows confirmation dialog, and portless kills certutil after 30 s. While the CA is untrusted,
+every `portless run` retries trust and blocks on a new dialog. The tool must therefore:
+- trust once, interactively and with no timeout (`wtp setup`);
+- always start the proxy itself with `--skip-trust`.
 
-### How Windows resolves `*.localhost`
+### Name resolution and trust per client (A2 measurements)
 
-| Client | `a.b.localhost` | Notes |
+Target: `https://feat-alpha-search.api.lumen.localhost/api/greeting` through the proxy.
+
+| # | Client | Result |
 | --- | --- | --- |
-| Windows resolver (`Resolve-DnsName`, .NET, `getaddrinfo`) | **ENOTFOUND** | Only bare `localhost` resolves |
-| Node 24 `dns.lookup`, Bun `dns.lookup` | **ENOTFOUND** | So `fetch("https://x.app.localhost")` from Node/Bun fails |
-| curl 8.17 (mingw) and 8.22 (Windows) | 127.0.0.1 | curl special-cases `.localhost` |
-| Chromium / Playwright / Edge / Chrome | 127.0.0.1 | Built-in rule; ignores the OS resolver and `/etc/hosts` |
+| 1 | Node 24 `fetch`, no flags | `ENOTFOUND` |
+| 2 | Node + `--import localhost-dns.mjs` | `SELF_SIGNED_CERT_IN_CHAIN` (DNS fixed; Node's bundled CA list lacks the CA) |
+| 3 | Node + preload + `NODE_EXTRA_CA_CERTS=~/.portless/ca.pem` | 200 |
+| 4 | Node + preload + `--use-system-ca` | 200 (reads the Windows user Root store) |
+| 5 | Same as 4 via `NODE_OPTIONS="--use-system-ca --import=file:///C:/…/localhost-dns.mjs"` | 200. A bare `C:/…` path fails with `ERR_UNSUPPORTED_ESM_URL_SCHEME`, so it must be a `file://` URL |
+| 6 | Node `fetch` of `http://127.0.0.1:<app port>` | 200 |
+| 7 | Bun `fetch`, no flags | `SELF_SIGNED_CERT_IN_CHAIN`: Bun's fetch resolves `*.localhost` itself |
+| 11 | Bun `fetch` + `NODE_EXTRA_CA_CERTS` | 200, no preload needed |
+| 12 | Bun `fetch` + `--use-system-ca` | 200 |
+| 13 | Bun `node:https` + CA | `ENOTFOUND` (Bun's `node:dns` is the OS resolver) |
+| — | Process launched by `portless run` with only `NODE_OPTIONS=--import=<preload>` | 200: portless supplies the CA, the preload supplies DNS |
+| — | Chromium / Playwright / curl | Resolve `*.localhost` to loopback themselves. Chromium uses the Windows store, so no flag is needed |
+| — | Windows resolver, `Resolve-DnsName`, .NET | `ENOTFOUND` |
 
-`portless hosts sync` would fix Node/Bun but needs an elevated shell. Consequences for the design:
-browser-side calls (Vite `VITE_API_URL`) work; a server-side proxy (Vite `server.proxy` to
-`https://alpha-search.api.lumen.localhost`) or a Node test runner calling the API by name will not,
-unless hosts are synced once as admin or the tool targets `127.0.0.1:<proxy port>` with a `Host`
-header.
+Answer to "NODE_EXTRA_CA_CERTS or --use-system-ca": either works on Node 24.
+- Inside processes started by `portless run`, nothing is needed: portless already sets
+  `NODE_EXTRA_CA_CERTS`.
+- For processes started outside portless (test runners, scripts), `--use-system-ca` is the
+  better default because it follows the OS store that `wtp setup` populated.
+- `NODE_EXTRA_CA_CERTS` is the fallback for older Node versions.
 
-### portless bugs and gaps found on Windows
+### portless bugs found on Windows
 
-1. **Monorepo mode is broken on Windows**: `portless` at a workspace root spawns `npm run dev`
-   with `spawn("npm", …)` and no shell (`spawnChildProcess`), so it dies with
-   `Error: spawn npm ENOENT`. Single-app `run` is fine because it goes through `cmd.exe /d /s /c`.
-2. A per-app `portless run` inside `apps/api` ignores the root `portless.json` `apps` map and
-   names the app from `package.json` (`@lumen/api` → `api`, so `alpha-search.api.localhost`
-   instead of `alpha-search.api.lumen.localhost`). `portless get api.lumen` from the same
-   directory still prints the `api.lumen` URL, so the two disagree. Passing `--name` fixes it.
-3. The 30 s certutil timeout plus "retry trust on every run" (above).
-4. A killed process leaves a stale route until `portless prune` (doctor reports it).
+1. Monorepo root mode spawns `npm` without a shell, so it fails with `spawn npm ENOENT`.
+   Single-app `run` works because it goes through `cmd.exe`.
+2. A per-app `run` ignores the root `portless.json` `apps` map and names the app from
+   `package.json` (`@lumen/api` → `api`), while `portless get api.lumen` disagrees. Passing
+   `--name` fixes it.
+3. The 30 s certutil timeout, combined with retrying trust on every run.
+4. A killed process leaves a stale route until `portless prune`.
 
-## 2. Two worktrees at once (host)
-
-Commands (Git Bash), HTTP mode first (`portless proxy start --no-tls`), then HTTPS
-(`PORTLESS_UNPRIVILEGED=0 portless proxy start --skip-trust`):
+## 2. Two worktrees at once on the host (A2: HTTPS, CA trusted, branch names)
 
 ```sh
 for w in alpha beta; do
-  R=/c/Desarrollo/scratch-portless-fixture/.worktrees/$w
-  cd $R; API=$(portless get api.lumen)
-  (cd apps/api && portless run --name api.lumen) &
-  (cd apps/web && VITE_API_URL=$API portless run --name lumen) &
+  R=/c/Desarrollo/scratch-portless-fixture/.worktrees/$w; cd $R
+  export PORTLESS_PREFIX=$(git rev-parse --abbrev-ref HEAD | tr '/' '-')
+  API=$(portless get api.lumen)
+  (cd apps/api && portless run --name api.lumen &)
+  (cd apps/web && VITE_API_URL=$API portless run --name lumen &)
 done
 ```
 
-portless output (HTTPS run, abridged):
-
 ```
-Running: PORT=4396 HOST=127.0.0.1 PORTLESS_URL=https://alpha-search.api.lumen.localhost NODE_EXTRA_CA_CERTS="C:\Users\otero\.portless\ca.pem" npm run dev
-Running: PORT=4024 HOST=127.0.0.1 PORTLESS_URL=https://beta-sync.lumen.localhost NODE_EXTRA_CA_CERTS="C:\Users\otero\.portless\ca.pem" npm run dev -- --port 4024 --strictPort --host 127.0.0.1
-
 $ portless list
-  https://alpha-search.api.lumen.localhost  ->  localhost:4396
-  https://alpha-search.lumen.localhost      ->  localhost:4748
-  https://beta-sync.api.lumen.localhost     ->  localhost:4636
-  https://beta-sync.lumen.localhost         ->  localhost:4024
+  https://feat-alpha-search.api.lumen.localhost  ->  localhost:4856
+  https://feat-alpha-search.lumen.localhost      ->  localhost:4721
+  https://fix-beta-sync.api.lumen.localhost      ->  localhost:4450
+  https://fix-beta-sync.lumen.localhost          ->  localhost:4224
 ```
 
-`curl http://alpha-search.api.lumen.localhost/api/greeting` →
-`{"message":"hello from lumen api","branch":"feat/alpha-search","port":4773}`; the beta URL
-answers with `fix/beta-sync`. The `.env` `PORT` values (5173/8787) lost to the injected ones in
-both stacks: Node's `--env-file` never overrides an existing variable, and Vite gets `--port`.
-
-E2E, both worktrees concurrently:
+E2E in both worktrees at the same time, with `E2E_IGNORE_HTTPS_ERRORS` unset:
 
 ```sh
-(cd .worktrees/alpha && BASE_URL=$(portless get lumen) EXPECT_BRANCH=feat/alpha-search npx playwright test) &
-(cd .worktrees/beta  && BASE_URL=$(portless get lumen) EXPECT_BRANCH=fix/beta-sync   npx playwright test) &
+(cd .worktrees/alpha && BASE_URL=https://feat-alpha-search.lumen.localhost EXPECT_BRANCH=feat/alpha-search npx playwright test) &
+(cd .worktrees/beta  && BASE_URL=https://fix-beta-sync.lumen.localhost     EXPECT_BRANCH=fix/beta-sync     npx playwright test) &
 ```
 
 | Run | alpha | beta |
 | --- | --- | --- |
-| Baseline, no portless (`webServer` on 5173/8787) | 1 passed | — |
-| HTTP proxy | 1 passed (18.6 s) | 1 passed (19.0 s) |
-| HTTPS proxy, CA untrusted, `E2E_IGNORE_HTTPS_ERRORS=1` | 1 passed (1.6 s) | 1 passed (1.4 s) |
-| Negative: alpha URL with `EXPECT_BRANCH=fix/beta-sync` | 1 failed: received `[feat/alpha-search]` | — |
+| A1: no portless (`webServer` on 5173/8787) | passed | — |
+| A1: HTTP proxy | passed | passed |
+| A1: HTTPS, CA untrusted, ignore flag | passed | passed |
+| A1: negative check (alpha URL expecting beta's branch) | failed as expected: received `[feat/alpha-search]` | — |
+| **A2: HTTPS, CA trusted, no ignore flag** | **1 passed (1.2 s)** | **1 passed (1.2 s)** |
 
 ## 3. Detection rules
 
-Implemented in `src/detect/` and exercised by `test/detect.test.ts` on four fixtures
-(lumen-notes, orbit-turbo, kettle-procfile, quill-single).
+Implemented in `src/detect/` and tested on four fixtures: lumen-notes, orbit-turbo,
+kettle-procfile and quill-single.
 
 ### Dev commands
 
-| Rule | Source | Misses |
-| --- | --- | --- |
-| Workspaces from `package.json#workspaces` (array or `{packages}`) and `pnpm-workspace.yaml`; globs expanded one level (`apps/*`) | manifests | `**` deep globs, negations, Yarn `nohoist`, Bun catalogs, Rush/Lerna |
-| Per package: first of `dev`, `start:dev`, `serve`, `start` script | `package.json#scripts` | Custom names (`develop`, `web`), scripts that only chain others (`run-p dev:*`) |
-| Nx: `project.json` targets `serve`/`dev` → `nx run <name>:serve` | `project.json` | Nx inferred targets from plugins, `workspace.json` |
-| Turbo/Nx noted as orchestrators; per-package scripts are still used | `turbo.json`, `nx.json` | Turbo filters and `dependsOn` setups that start more processes |
-| Procfile / Procfile.dev lines become stacks | Procfile | Foreman `.env` port bases, `PORT` offsets per process |
-| Front framework from deps or config file: next, nuxt, astro, sveltekit, react-router, angular, vite (meta-frameworks before vite) | deps + `*.config.*` | Remix classic, Gatsby, Docusaurus, Storybook, Expo, Qwik, SolidStart |
-| Back from deps (nestjs, hono, fastify, express, koa, elysia) or a dev command that runs `node/bun/tsx/deno/nodemon <file>` | deps + command | Go/Python/Ruby servers, Docker Compose services, `bun --hot` with no file |
+| Rule | Misses |
+| --- | --- |
+| Workspaces from `package.json#workspaces` and `pnpm-workspace.yaml`, with one-level globs | `**` globs, negations, Rush/Lerna |
+| Per package, the first of `dev`, `start:dev`, `serve`, `start` | Custom names; scripts that only chain others |
+| Nx `project.json` targets `serve`/`dev` | Nx inferred targets |
+| Turbo/Nx recorded as orchestrators; per-package scripts still used | Turbo filters that start more processes |
+| Procfile / Procfile.dev lines become stacks | Foreman port bases |
+| Front framework from deps or config file (meta-frameworks checked before vite) | Gatsby, Storybook, Qwik, SolidStart |
+| Back from deps, or a dev command running `node/bun/tsx/deno/nodemon <file>` | Non-JS servers, Compose services |
 
 ### Ports
 
 | Rule (highest precedence first) | Misses |
 | --- | --- |
-| `--port N` / `-p N` in the dev command | Ports set through env in the script (`PORT=3001 next dev`) |
-| `.env`, `.env.development`, `.env.local`, `.env.development.local` (later wins), key `PORT`; other `*_PORT` keys are listed | `.env.<mode>` beyond development, dotenv-expand, secrets managers |
-| Literal in the framework config or server entry: `port: N`, `PORT ?? N`, `PORT \|\| N`, `.listen(N` | Computed ports, ports in imported modules |
-| Framework default (5173, 3000, 4321, 4200) | Frameworks whose default changed between majors |
+| `--port N` / `-p N` in the dev command | `PORT=3001 cmd` prefixes |
+| `.env`, `.env.development`, `.env.local`, `.env.development.local`, key `PORT` | Other modes, dotenv-expand |
+| Literal in the config or server entry: `port: N`, `PORT ?? N`, `PORT \|\| N`, `.listen(N` | Computed or imported ports |
+| Framework default | Defaults that changed between majors |
 
 ### E2E
 
 | Rule | Misses |
 | --- | --- |
-| `playwright.config.{ts,mts,cts,js,mjs,cjs}` at the root and in each workspace; `baseURL` value, resolving a shorthand or identifier to its `const` | Configs split across files, per-project `baseURL`, `--config` paths in scripts |
-| `process.env.X` names inside the `baseURL` expression → override variable | Env read through helpers (`env("BASE_URL")`) |
-| `webServer:` presence | Whether it is conditional (needs reading the code) |
-| `cypress.config.*` `baseUrl` | `cypress.json` (legacy), component testing |
+| `playwright.config.*` at the root and per workspace; `baseURL`, following an identifier to its `const` | Split configs, per-project `baseURL` |
+| `process.env.X` inside `baseURL` → the variable to override | Env helpers |
+| `webServer:` present | Whether it is conditional |
+| `cypress.config.*` `baseUrl` | `cypress.json` |
 
 ### How each is overridden (env injection first)
 
-| Target | Mechanism | File edit? |
-| --- | --- | --- |
-| Front/back port | portless `PORT` (+`--port` for listed frameworks) | No; warn when the entry never reads `PORT` or uses dotenv `override: true` |
-| Front → API URL | Inject the detected API env var (`VITE_API_URL`, `NEXT_PUBLIC_API_URL`…) with `portless get <api>` | No; the variable name is the one thing to confirm per repo |
-| Playwright `baseURL` read from env | Inject that variable | No |
-| Playwright literal `baseURL` or unconditional `webServer` | Generated wrapper `.wtp/playwright.config.ts` that imports the user config and sets `use.baseURL`, `webServer: undefined`; run with `--config` | No (generated file, gitignored) |
-| Cypress | `CYPRESS_BASE_URL` | No |
-| Names | `--name` on each `portless run` | No; optional `portless.json` only for humans |
+| Target | Mechanism |
+| --- | --- |
+| Port | portless `PORT` (+ `--port` flag); warn if the entry never reads `PORT` or uses dotenv `override: true` |
+| Front → API URL | Inject the detected env var with `portless get <api>` |
+| Server → server by name | `NODE_OPTIONS=--import=<file URL of preload>` (§6) |
+| Playwright `baseURL` read from env | Inject that variable |
+| Literal `baseURL` or unconditional `webServer` | Generated wrapper config passed with `--config` |
+| Cypress | `CYPRESS_BASE_URL` |
+| Names | `--name` per app + `PORTLESS_PREFIX=<branch>` |
 
-## 4. Docker: Playwright in a container against a worktree URL
+## 4. E2E: host by default, Docker as opt-in
 
-Done for real; both worktrees ran concurrently and passed over HTTP and over HTTPS with the CA
-trusted inside the container.
+The host run is the default: it is about 10× faster for this suite, and `--headed` / `--ui` open
+Chromium on screen. `e2e --docker` stays for isolation and CI-like runs.
 
-Obstacles and fixes:
+Timings: alpha worktree, HTTPS with the CA trusted, sequential runs, wall time measured
+around the whole command.
 
-1. The proxy listens only on `127.0.0.1`/`::1` on Windows. WSL2 is in NAT mode
-   (`wslinfo --networking-mode` → `nat`), so WSL and its containers cannot reach it:
-   `curl -H 'Host: …' http://172.23.128.1/` → no connection.
-   Fix used: a 12-line Node TCP bridge on Windows bound to the WSL vEthernet address
-   (`172.23.128.1:80/443 → 127.0.0.1:80/443`). No admin, no firewall change was needed here.
-   Alternatives: WSL `networkingMode=mirrored` in `.wslconfig` (needs `wsl --shutdown`, which
-   would stop the other WSL containers), or `portless proxy start --lan` (binds `0.0.0.0` and
-   switches to `.local` names — not wanted).
-2. Inside the container `getent hosts x.lumen.localhost` fails, and Chromium maps `*.localhost`
-   to its own loopback regardless of `/etc/hosts` or `--add-host`. Fix used: a second tiny bridge
-   inside the container on `127.0.0.1:80/443 → 172.23.128.1`. Chromium keeps its loopback rule,
-   the `Host` header and SNI pass through untouched, and the fixture config is unchanged.
-3. TLS: Chromium in the image does not trust the portless CA
-   (`net::ERR_CERT_AUTHORITY_INVALID`). The image has no `certutil`; installing
-   `libnss3-tools` at start and running
-   `certutil -d sql:$HOME/.pki/nssdb -A -t "C,," -n portless -i ca.pem` fixed it without
-   `ignoreHTTPSErrors`. A derived image would avoid the apt step on every run.
+| Mode | Runs (wall) | Playwright-reported | Typical |
+| --- | --- | --- | --- |
+| Host `npx playwright test` | 1.70, 1.79, 1.97, 2.31, 3.91 s | 0.66–2.2 s | **~1.9 s** |
+| Docker, derived image `wtp-playwright:1.56.1` (Playwright + `libnss3-tools`), container start + NSS import + bridges | 47.35 (cold), 17.89, 17.89, 17.81, 18.29 s | 8.8–10.2 s | **~17.9 s warm** |
 
-Result:
+Most of the Docker cost is container start plus loading `node_modules` over the WSL `/mnt/c` 9P
+mount. The `wsl` hop itself costs about 65 ms. Copying the worktree into a volume, or running
+from a WSL-native checkout, would shrink it.
 
-| Container run | alpha | beta |
-| --- | --- | --- |
-| HTTP | 1 passed (9.9 s) | 1 passed (9.9 s) |
-| HTTPS, CA untrusted | failed `ERR_CERT_AUTHORITY_INVALID` | same |
-| HTTPS, CA imported into NSS | 1 passed (8.9 s) | 1 passed (8.9 s) |
-
-The container ran the worktree's own `node_modules/@playwright/test` (installed on Windows; it is
-pure JS) with the image's browsers; the versions must match (1.56.1 ↔ `v1.56.1-noble`). The WSL
-gateway IP changes across WSL restarts, so the tool must read it each time
-(`ip route show default` inside WSL, or the `vEthernet (WSL)` adapter on Windows).
+How the container reaches the worktree (A1, unchanged):
+1. The proxy listens only on Windows loopback, and WSL is in NAT mode. A small Node TCP bridge
+   on the WSL vEthernet address (`172.23.128.1:80/443 → 127.0.0.1`) fixes that without admin.
+   The address changes across WSL restarts, so read it each time.
+2. Chromium maps `*.localhost` to its own loopback whatever `/etc/hosts` says. A second bridge
+   inside the container (`127.0.0.1:80/443 → 172.23.128.1`) keeps that rule useful. `Host` and
+   SNI pass through.
+3. The image does not trust the CA (`ERR_CERT_AUTHORITY_INVALID`). Importing `ca.pem` into
+   `~/.pki/nssdb` with `certutil` fixes it without `ignoreHTTPSErrors`. A derived image avoids
+   paying for apt on every run.
+4. The container uses the worktree's own `@playwright/test`. Its version must match the image
+   tag (1.56.1 ↔ `v1.56.1-noble`).
 
 ## 5. T3 Code integration
 
-Findings (read-only):
+### `t3.json` (supported path)
 
-- `~/.t3/bin/t3.cmd` is a real CLI (bundled `bin.mjs`). `t3 project` has only `add`, `remove`,
-  `rename`. There is no scripts subcommand.
-- The server accepts a `project.update`/`project.meta.update` command whose `scripts` field
-  **replaces the whole array**; new IDs must be 1–24 chars of lowercase letters, digits or
-  hyphens. The CLI already dispatches `project.update` for rename, so a `t3 project scripts` verb
-  would be small, but it is not exposed.
-- The local server on `127.0.0.1:3773` (from `server-runtime.json`) speaks an authenticated
-  WebSocket RPC; using it from our CLI would mean borrowing T3's auth, which is unsupported.
-- The T3 MCP `t3_project_update` tool (available to agents in T3 threads) takes `scripts` with
-  exactly the listed fields. This is the supported write path today.
-- `projection_projects.scripts_json` currently holds no scripts on this machine.
-- When a script runs, T3 types the command into a terminal whose cwd is the thread's worktree
-  (or the project root) and sets `T3CODE_PROJECT_ROOT` and `T3CODE_WORKTREE_PATH`.
-- `previewUrl` is a fixed string per project; no placeholder substitution was found. A single
-  value cannot point at each worktree's own hostname.
+The installed build defines it in `packages/contracts/src/t3ProjectFile.ts`.
+- Schema URL `https://t3.codes/schema/t3.json`; at most 50 scripts.
+- Script fields: `name`, `command` (non-empty, trimmed), `icon`, `runOnWorktreeCreate`,
+  `runOnSettle`, `stopOnSettle`, `async`, `previewUrl` ("only honored on the desktop build"),
+  `autoOpenPreview`.
+- Top-level keys: `$schema`, `iconPath`, `defaultThreadEnvMode`, `worktreeSubmodules`, `scripts`.
+- The client reads `t3.json` per checkout. In project settings it offers **"Import from
+  t3.json — add actions declared by this checkout"**, and in the scripts menu a **"From
+  t3.json"** group.
+- Importing copies the script into the project's scripts; it is not a live link. After
+  `t3.json` changes, re-import the script.
 
-Proposal: `wtp t3 scripts [--json]` prints the scripts array; the NF coordinator reads the
-project (`t3_project_read`), merges by `id` (because update replaces the array) and applies it
-with `t3_project_update`. The CLI never touches the database.
+`wtp t3 scripts [dir] [--dry-run] [--json] [--bin <cmd>] [--preview-url <url>]` is implemented:
+- It finds the repository root (works from a worktree, where `.git` is a file).
+- It merges by trimmed script name. A wtp script replaces the fields it sets and keeps any extra
+  fields; other scripts and top-level keys stay untouched; new scripts are appended.
+- It adds `$schema` when missing, enforces the 50-script limit and the icon list, refuses to
+  touch invalid JSON, and reports `created` / `updated` / `unchanged`. A second run reports
+  `unchanged` and leaves the bytes the same.
+- Tests: `test/t3.test.ts`.
+
+Output on the fixture (`--bin "bunx wtp"`):
 
 ```json
-[
-  { "id": "wtp-setup", "name": "Setup ports", "command": "bunx wtp setup", "icon": "configure",
-    "runOnWorktreeCreate": true, "async": false },
-  { "id": "wtp-dev", "name": "Dev (portless)", "command": "bunx wtp up", "icon": "play",
-    "runOnWorktreeCreate": false, "async": true,
-    "previewUrl": "https://lumen.localhost", "autoOpenPreview": false },
-  { "id": "wtp-e2e", "name": "E2E (this worktree)", "command": "bunx wtp e2e", "icon": "test",
-    "runOnWorktreeCreate": false },
-  { "id": "wtp-e2e-docker", "name": "E2E (container)", "command": "bunx wtp e2e --docker", "icon": "test",
-    "runOnWorktreeCreate": false }
-]
+{
+  "$schema": "https://t3.codes/schema/t3.json",
+  "scripts": [
+    { "name": "Ports setup", "command": "bunx wtp setup --quiet", "icon": "configure", "runOnWorktreeCreate": true },
+    { "name": "Dev (portless)", "command": "bunx wtp up", "icon": "play", "runOnWorktreeCreate": false, "stopOnSettle": true },
+    { "name": "E2E", "command": "bunx wtp e2e", "icon": "test", "runOnWorktreeCreate": false },
+    { "name": "E2E (Docker)", "command": "bunx wtp e2e --docker", "icon": "test", "runOnWorktreeCreate": false }
+  ]
+}
 ```
 
-`previewUrl` can only carry the main checkout's URL; `wtp up` prints the worktree URL, and the
-agent opens it with T3's preview tools. A `{worktree}` placeholder in `previewUrl` (or a
-`t3 project scripts` verb) is a feature request for T3.
+### Per-worktree preview URL: what this T3 build does
 
-## 6. Recommended design
+Read-only inspection of `resources/server.asar` (client bundle `_chat-*.js`,
+`browserDefaults-*.js`, `preview-*.js`; server `runtimeLayer-*.mjs`).
 
-Working name: `worktree-ports` / binary `wtp`. Better names: **`treeport`** (short, says
-worktree + port), `lanes`, `wtport`, `forkport`. Check npm availability before choosing.
+- **Script-run path.** After writing the command to the terminal, T3 calls
+  `openPreview(ph(environmentId, script.previewUrl))` when `autoOpenPreview` is set. `ph`
+  normalizes the URL (adds a scheme, validates the protocol). For a remote environment it also
+  rewrites `localhost`/`127.0.0.1` to the environment's address. There is **no placeholder
+  substitution, no env expansion and no branch/worktree token**. The server only validates
+  `previewUrl`; it never rewrites it. So a single `previewUrl` cannot follow the branch.
+- **Scripts get** `T3CODE_PROJECT_ROOT` and `T3CODE_WORKTREE_PATH` in their environment, and
+  their cwd is the worktree. That is where the branch is available — inside the script, not in
+  `previewUrl`.
+- **"Local servers" discovery.** This is the per-worktree mechanism that exists.
+  - A `PortDiscovery` service polls listeners every 3 s (via `lsof`, `/proc`, or the Windows
+    listener path) and keeps only those **owned by the thread's terminals or agents**.
+  - It probes each one for an HTML response.
+  - The empty preview then shows "Local servers this thread starts will show up here
+    automatically", and one click opens that server.
+  - Each thread therefore sees its own worktree's dev server, but as `http://localhost:<port>`,
+    not as the branch name. `T3CODE_PORT_DISCOVERY=0` disables it.
+  - This is most likely what Pablo uses in the other project. No `t3.json` on this machine
+    other than nf-stack's sets a `previewUrl`, and no stored project script contains a
+    placeholder.
+- **Clicking a terminal link.** Links printed in a T3 terminal are clickable. With the setting
+  `browserLinkTarget: "app"` they open in the in-app preview; on this machine it is `"system"`.
+- **Agents** can open any URL in the preview through T3's preview tools (`preview_open`).
 
-**Wrap the portless CLI, do not embed its API.** The library does not export worktree naming or
-`run`; the CLI has a documented contract (`--json` on `get`/`list`/`doctor`, exit codes 0/1/2,
-`PORTLESS_*` env). Pin portless as a dependency of the tool so every worktree uses the same
-version.
+Closest working setups that keep the subdomain named after the branch:
 
-Commands:
+1. **Recommended.** `wtp up` prints `https://<branch>.<app>.localhost` (from `portless get`) as
+   the first stdout line, and the Dev script has no `previewUrl`. With `browserLinkTarget: "app"`,
+   one click opens the branch URL in T3's preview. If nobody clicks, "Local servers" still lists
+   the thread's own dev server automatically (port URL). When an agent runs the stack, it calls
+   `preview_open` with `wtp url web`.
+2. **Main-checkout only.** Pass `--preview-url https://lumen.localhost` (no prefix on
+   `main`/`master`) to get `autoOpenPreview` in the main checkout. Worktree threads would open
+   main's app, so this is not the default.
+3. **Not viable:** a fixed per-repo alias that `up` repoints to the current worktree
+   (`portless alias`). It is per machine, not per thread, so two running worktrees fight over
+   it.
+4. **T3 feature request:** expand `${env:VAR}` or a `{branch}` / `{worktree}` token in
+   `previewUrl` before `ph`. `wtp` could then write
+   `previewUrl: "https://{branch}.lumen.localhost"`.
+
+## 6. Server-to-server calls by name without admin
+
+| Option | Works for | Keeps the branch HTTPS name | Setup | Weak points |
+| --- | --- | --- | --- | --- |
+| A. `up` injects `http://127.0.0.1:<port>` | Any language | No: plain HTTP straight to the app, a different origin from the browser, cookies/CORS differ | `up` must read `portless list --json` after start; dependents restart when a port changes | Port changes every run; differs from what the browser uses |
+| **B. `--import` DNS preload** (`preload/localhost-dns.mjs`) | Node (fetch/undici, `http`, `https`, `dns.promises`). Bun `fetch` already resolves `*.localhost` itself | Yes; same URL as the browser | `up` adds `NODE_OPTIONS=--import=file:///…/localhost-dns.mjs`; portless already adds the CA | Node only; Bun `node:https` and non-JS servers are not covered |
+| C. `portless hosts sync` | Everything | Yes | One elevated shell **per new route**, so every new branch | Needs admin each time; breaks the no-admin goal |
+
+**Recommendation: B by default for Node stacks, A as the automatic fallback for non-Node stacks,
+C only on Pablo's explicit choice.** Evidence:
+- B passed by itself (rows 3–5).
+- B passed inside a `portless run` with only `NODE_OPTIONS` added.
+- B is tested in `test/preload.test.ts`: Node `fetch` reaches
+  `feat-alpha-search.api.lumen.localhost:<port>`, and `dns.promises.lookup` answers while other
+  names are left alone.
+
+## 7. Recommended design
+
+Working name `worktree-ports`, binary `wtp` (still provisional). "treeport" was a coined word:
+work*tree* + *port*. Other candidates: `wtport`, `lanes`, `forkport`.
+
+**Wrap the portless CLI**: it has a stable `--json` contract and owns worktree naming. Pin its
+version as a dependency.
 
 | Command | Does |
 | --- | --- |
-| `wtp detect [--json]` | Implemented. Stacks, dev commands, ports, e2e config and override plan |
-| `wtp doctor [--json]` | `portless doctor --json` + Windows checks: CA in user Root, hosts entries, WSL gateway reachability, Docker in WSL, Playwright image vs installed version |
-| `wtp setup` | One-time: start proxy, run trust **without** a timeout (direct certutil on Windows), optional elevated `hosts sync`; T3 `runOnWorktreeCreate` runs it with `--quiet` and it no-ops when ready |
-| `wtp up [--no-tls]` | For each detected stack: `portless run --name <name>` in its directory (never root monorepo mode on Windows), API URL env injected into fronts from `portless get`, proxy started with `--skip-trust`; prints the worktree URLs; Ctrl+C stops the tree |
-| `wtp e2e [--docker] [-- args]` | Resolves URLs with `portless get`, injects `BASE_URL`-style env or generates the wrapper config, runs the runner; `--docker` adds the Windows bridge, the in-container loopback bridge and the NSS import, using the image tag that matches the installed Playwright |
-| `wtp t3 scripts [--json]` | Prints the T3 scripts array above for the coordinator to merge and apply |
-| `wtp url <stack>` | `portless get` with the tool's naming |
+| `wtp detect [--json]` | Implemented |
+| `wtp t3 scripts` | Implemented: writes or merges `t3.json` by name |
+| `wtp setup [--quiet]` | Once per machine: start the proxy, trust the CA with no timeout, check for Docker in WSL. No-op when ready (`runOnWorktreeCreate`) |
+| `wtp up` | Per stack: `portless run --name <app>` with `PORTLESS_PREFIX=<sanitized branch>` and the proxy on `--skip-trust`. Injects the API URL into fronts and `NODE_OPTIONS` (preload) into Node stacks. Prints the branch URLs, front first |
+| `wtp e2e [--headed\|--ui] [-- args]` | Host by default: injects `BASE_URL` (or the wrapper config) and `NODE_OPTIONS=--use-system-ca` |
+| `wtp e2e --docker` | Opt-in: derived image matching the installed Playwright, Windows bridge + in-container bridge, NSS import of the CA |
+| `wtp url <stack>` | `portless get` with the same prefix |
+| `wtp doctor [--json]` | portless doctor + CA in the user Root store + WSL gateway + image/version checks |
 
-Config: none by default; detection drives everything. An optional `wtp.json` overrides the
-detected values (stack names, API env var name, e2e command, Docker image). It does not replace
-`portless.json`, which the tool leaves alone.
+Config: none by default. An optional `wtp.json` can override detected names, the API env var,
+the e2e command and the image.
 
 ## Cleanup
 
-Processes started by the spike were stopped (stacks, bridges, containers, proxy). To remove
-portless completely:
+Everything started by the spike was stopped (stacks, bridges, containers, proxy). To remove
+portless:
 
 ```sh
 portless proxy stop
-portless clean --yes                 # removes ~/.portless state and the CA trust entry
-certutil -delstore -user Root "portless Local CA"   # only if the CA was trusted and clean failed
+portless clean --yes
+certutil -delstore -user Root "portless Local CA"   # only if clean leaves it
 npm rm -g portless
 ```
 
-The fixture stays at `C:\Desarrollo\scratch-portless-fixture` (`git worktree remove` both
-worktrees, then delete the folder, to remove it). The Playwright image can be removed with
-`wsl -d Ubuntu-24.04 -- docker rmi mcr.microsoft.com/playwright:v1.56.1-noble`.
+Fixture: run `git worktree remove` on both worktrees, then delete
+`C:\Desarrollo\scratch-portless-fixture`.
+
+Images:
+`wsl -d Ubuntu-24.04 -- docker rmi wtp-playwright:1.56.1 mcr.microsoft.com/playwright:v1.56.1-noble`.
