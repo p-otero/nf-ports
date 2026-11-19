@@ -4,15 +4,20 @@ import { formatReport } from "./format.ts";
 import { findRepoRoot } from "./git.ts";
 import { T3FileError, writeT3Scripts } from "./t3/project-file.ts";
 import { t3ScriptsFor } from "./t3/scripts.ts";
+import { formatBanner, planUp } from "./up/plan.ts";
+import { currentBranch, resolvePortlessUrl, runUp } from "./up/run.ts";
 
-const usage = `wtp - per-worktree ports and names through portless
+const usage = `nfp - per-worktree ports and names through portless
 
 Usage:
-  wtp detect [dir] [--json]
+  nfp detect [dir] [--json]
       Print the stacks, dev commands, ports and e2e config found
-  wtp t3 scripts [dir] [--dry-run] [--json] [--bin <cmd>] [--preview-url <url>]
-      Write or merge the wtp scripts into t3.json at the repository root, by script name
-  wtp help`;
+  nfp t3 scripts [dir] [--dry-run] [--json] [--bin <cmd>] [--preview-url <url>]
+      Write or merge the nfp scripts into t3.json at the repository root, by script name
+  nfp up [dir] [--print]
+      Start every stack through portless under the branch name; the first line is the front URL.
+      --print resolves and prints the launch plan as JSON without starting anything
+  nfp help`;
 
 export type CliResult = { readonly code: number; readonly stdout: string; readonly stderr: string };
 
@@ -69,7 +74,7 @@ const runT3Scripts = (args: readonly string[]): CliResult => {
   const root = findRepoRoot(start);
   if (!root) return { code: 1, stdout: "", stderr: `no git repository at or above ${start}` };
   const scripts = t3ScriptsFor(detect(root), {
-    bin: parsed.values.get("--bin") ?? "wtp",
+    bin: parsed.values.get("--bin") ?? "nfp",
     previewUrl: parsed.values.get("--preview-url") ?? null,
   });
   if (scripts.length === 0) return { code: 1, stdout: "", stderr: `no dev stacks detected in ${root}` };
@@ -107,9 +112,33 @@ export const run = (argv: readonly string[]): CliResult => {
   return usageError(`unknown command: ${command}`);
 };
 
-if (import.meta.main) {
-  const result = run(process.argv.slice(2));
+export type UpRequest = { readonly root: string; readonly print: boolean };
+
+export const parseUp = (args: readonly string[]): UpRequest | CliResult => {
+  const parsed = parseArgs(args, ["--print"], []);
+  if (typeof parsed === "string") return usageError(parsed);
+  if (parsed.positional.length > 1) return usageError("up takes at most one directory");
+  const start = parsed.positional[0] ?? process.cwd();
+  const root = findRepoRoot(start);
+  if (!root) return { code: 1, stdout: "", stderr: `no git repository at or above ${start}` };
+  return { root, print: parsed.flags.has("--print") };
+};
+
+const emit = (result: CliResult): number => {
   if (result.stdout) console.log(result.stdout);
   if (result.stderr) console.error(result.stderr);
-  process.exitCode = result.code;
+  return result.code;
+};
+
+const main = async (argv: readonly string[]): Promise<number> => {
+  if (argv[0] !== "up") return emit(run(argv));
+  const request = parseUp(argv.slice(1));
+  if ("code" in request) return emit(request);
+  if (!request.print) return runUp(request.root);
+  const plan = planUp(detect(request.root), currentBranch(request.root), resolvePortlessUrl);
+  return emit({ code: 0, stdout: JSON.stringify({ banner: formatBanner(plan), ...plan }, null, 2), stderr: "" });
+};
+
+if (import.meta.main) {
+  process.exitCode = await main(process.argv.slice(2));
 }

@@ -11,7 +11,7 @@ const fixture = (name: string): string => join(import.meta.dir, "fixtures", name
 const temporary: string[] = [];
 
 const repoCopy = (name: string): string => {
-  const root = mkdtempSync(join(tmpdir(), "wtp-t3-"));
+  const root = mkdtempSync(join(tmpdir(), "nfp-t3-"));
   temporary.push(root);
   cpSync(fixture(name), root, { recursive: true });
   mkdirSync(join(root, ".git"));
@@ -30,12 +30,12 @@ afterEach(() => {
 
 describe("t3ScriptsFor", () => {
   test("derives setup, dev and both e2e scripts for the lumen fixture", () => {
-    const scripts = t3ScriptsFor(detect(fixture("lumen-notes")), { bin: "wtp", previewUrl: null });
+    const scripts = t3ScriptsFor(detect(fixture("lumen-notes")), { bin: "nfp", previewUrl: null });
     expect(scripts.map((script) => [script.name, script.command, script.icon])).toEqual([
-      ["Ports setup", "wtp setup --quiet", "configure"],
-      ["Dev (portless)", "wtp up", "play"],
-      ["E2E", "wtp e2e", "test"],
-      ["E2E (Docker)", "wtp e2e --docker", "test"],
+      ["Ports setup", "nfp setup --quiet", "configure"],
+      ["Dev (portless)", "nfp up", "play"],
+      ["E2E", "nfp e2e", "test"],
+      ["E2E (Docker)", "nfp e2e --docker", "test"],
     ]);
     expect(scripts[0]?.runOnWorktreeCreate).toBe(true);
     expect(scripts[1]).not.toHaveProperty("previewUrl");
@@ -43,14 +43,14 @@ describe("t3ScriptsFor", () => {
 
   test("adds previewUrl and autoOpenPreview only when asked", () => {
     const [, dev] = t3ScriptsFor(detect(fixture("lumen-notes")), {
-      bin: "bunx wtp",
+      bin: "bunx nfp",
       previewUrl: "https://lumen.localhost",
     });
-    expect(dev).toMatchObject({ command: "bunx wtp up", previewUrl: "https://lumen.localhost", autoOpenPreview: true });
+    expect(dev).toMatchObject({ command: "bunx nfp up", previewUrl: "https://lumen.localhost", autoOpenPreview: true });
   });
 
   test("skips e2e scripts when no e2e config exists", () => {
-    const names = t3ScriptsFor(detect(fixture("kettle-procfile")), { bin: "wtp", previewUrl: null }).map(
+    const names = t3ScriptsFor(detect(fixture("kettle-procfile")), { bin: "nfp", previewUrl: null }).map(
       (script) => script.name,
     );
     expect(names).toEqual(["Ports setup", "Dev (portless)"]);
@@ -58,7 +58,7 @@ describe("t3ScriptsFor", () => {
 });
 
 describe("mergeScripts", () => {
-  const dev = { name: "Dev (portless)", command: "wtp up", icon: "play" as const };
+  const dev = { name: "Dev (portless)", command: "nfp up", icon: "play" as const };
 
   test("keeps foreign scripts and top-level keys, replaces by name and appends new ones", () => {
     const outcome = mergeScripts(
@@ -69,7 +69,7 @@ describe("mergeScripts", () => {
           { name: " Dev (portless) ", command: "old up", keybinding: "mod+d" },
         ],
       },
-      [dev, { name: "E2E", command: "wtp e2e", icon: "test" }],
+      [dev, { name: "E2E", command: "nfp e2e", icon: "test" }],
     );
     expect(outcome.added).toEqual(["E2E"]);
     expect(outcome.updated).toEqual(["Dev (portless)"]);
@@ -78,8 +78,8 @@ describe("mergeScripts", () => {
       defaultThreadEnvMode: "worktree",
       scripts: [
         { name: "Board", command: "board serve", previewUrl: "http://localhost:4646" },
-        { name: "Dev (portless)", command: "wtp up", keybinding: "mod+d", icon: "play" },
-        { name: "E2E", command: "wtp e2e", icon: "test" },
+        { name: "Dev (portless)", command: "nfp up", keybinding: "mod+d", icon: "play" },
+        { name: "E2E", command: "nfp e2e", icon: "test" },
       ],
     });
   });
@@ -105,7 +105,7 @@ describe("mergeScripts", () => {
 });
 
 describe("writeT3Scripts", () => {
-  const scripts = [{ name: "E2E", command: "wtp e2e", icon: "test" as const }];
+  const scripts = [{ name: "E2E", command: "nfp e2e", icon: "test" as const }];
 
   test("creates t3.json, then reports unchanged on a second run", () => {
     const root = repoCopy("lumen-notes");
@@ -134,19 +134,19 @@ describe("writeT3Scripts", () => {
   });
 });
 
-describe("wtp t3 scripts", () => {
+describe("nfp t3 scripts", () => {
   test("writes the repository root t3.json from a subdirectory", () => {
     const root = repoCopy("lumen-notes");
-    const result = run(["t3", "scripts", join(root, "apps", "web"), "--bin", "bunx wtp"]);
+    const result = run(["t3", "scripts", join(root, "apps", "web"), "--bin", "bunx nfp"]);
     expect(result.code).toBe(0);
     expect(result.stdout).toContain("created:");
     const file = readT3(root);
     expect(file.$schema).toBe(t3SchemaUrl);
     expect(file.scripts.map((script) => script["command"])).toEqual([
-      "bunx wtp setup --quiet",
-      "bunx wtp up",
-      "bunx wtp e2e",
-      "bunx wtp e2e --docker",
+      "bunx nfp setup --quiet",
+      "bunx nfp up",
+      "bunx nfp e2e",
+      "bunx nfp e2e --docker",
     ]);
   });
 
@@ -169,7 +169,7 @@ describe("wtp t3 scripts", () => {
   });
 
   test("fails outside a git repository and on invalid t3.json", () => {
-    const outside = mkdtempSync(join(tmpdir(), "wtp-nogit-"));
+    const outside = mkdtempSync(join(tmpdir(), "nfp-nogit-"));
     temporary.push(outside);
     expect(run(["t3", "scripts", outside]).code).toBe(1);
     const root = repoCopy("lumen-notes");

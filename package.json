@@ -1,10 +1,10 @@
 {
-  "name": "worktree-ports",
+  "name": "nf-ports",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "bin": {
-    "wtp": "src/cli.ts"
+    "nfp": "src/cli.ts"
   },
   "scripts": {
     "lint": "oxlint --deny-warnings src test preload",

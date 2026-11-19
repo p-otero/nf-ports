@@ -1,6 +1,6 @@
 # Spike NF-051: per-worktree ports and names through portless
 
-Attempts: A1 and A2, 2026-11-19. Machine: Windows 11 Pro 10.0.26200, non-admin user,
+Attempts: A1, A2 and A3, 2026-11-19. Repository `nf-ports`, binary `nfp`. Machine: Windows 11 Pro 10.0.26200, non-admin user,
 Git Bash and PowerShell 5.1.
 
 Versions: portless 0.18.1 (npm, global), Node 24.13.0, Bun 1.4.4, Vite 7.2.2,
@@ -25,8 +25,10 @@ Fixture: `C:\Desarrollo\scratch-portless-fixture` ("Lumen Notes", invented names
 | Default e2e | On the host: about 1.9 s wall time for the fixture suite, and headed/UI mode works |
 | `e2e --docker` | Opt-in. Works with real CA trust inside the container; about 17.9 s warm and 47 s cold |
 | Node server-to-server by name | Use the `--import` DNS preload (shipped in `preload/`), plus the CA that portless already injects |
-| T3 | `wtp t3 scripts` writes or merges `t3.json` at the repo root by script name (implemented) |
-| Per-worktree preview URL | No placeholder support in this T3 build. Closest working setups are in §5 |
+| T3 | `nfp t3 scripts` writes or merges `t3.json` at the repo root by script name (implemented) |
+| Per-worktree preview URL | No placeholder support in this T3 build. `nfp up` prints the branch URL as the first line, so with `browserLinkTarget: "app"` one click opens it in T3's preview (§5). Feature request draft: `docs/t3-preview-url-issue.md` |
+| `nfp up` | Implemented and verified in both worktrees at once (§2b) |
+| E2E with no window on screen | Browser projects are headless by default. For Electron: a hidden Win32 desktop needs no app change; an offscreen `showInactive()` env flag needs a small app change (§7) |
 
 ## 1. portless on Windows
 
@@ -55,7 +57,7 @@ Pablo accepted the dialog. `certutil -user -store Root` shows `CN=portless Local
 How we got there: `portless trust` runs `certutil -addstore -user Root`. That always opens a
 Windows confirmation dialog, and portless kills certutil after 30 s. While the CA is untrusted,
 every `portless run` retries trust and blocks on a new dialog. The tool must therefore:
-- trust once, interactively and with no timeout (`wtp setup`);
+- trust once, interactively and with no timeout (`nfp setup`);
 - always start the proxy itself with `--skip-trust`.
 
 ### Name resolution and trust per client (A2 measurements)
@@ -82,7 +84,7 @@ Answer to "NODE_EXTRA_CA_CERTS or --use-system-ca": either works on Node 24.
 - Inside processes started by `portless run`, nothing is needed: portless already sets
   `NODE_EXTRA_CA_CERTS`.
 - For processes started outside portless (test runners, scripts), `--use-system-ca` is the
-  better default because it follows the OS store that `wtp setup` populated.
+  better default because it follows the OS store that `nfp setup` populated.
 - `NODE_EXTRA_CA_CERTS` is the fallback for older Node versions.
 
 ### portless bugs found on Windows
@@ -129,6 +131,39 @@ E2E in both worktrees at the same time, with `E2E_IGNORE_HTTPS_ERRORS` unset:
 | A1: HTTPS, CA untrusted, ignore flag | passed | passed |
 | A1: negative check (alpha URL expecting beta's branch) | failed as expected: received `[feat/alpha-search]` | — |
 | **A2: HTTPS, CA trusted, no ignore flag** | **1 passed (1.2 s)** | **1 passed (1.2 s)** |
+
+## 2b. `nfp up` (A3)
+
+`src/up/plan.ts` builds the launch plan; `src/up/run.ts` executes it.
+- **Names.** From the root `portless.json` `apps` map when present. Otherwise the first front
+  takes the root package name, and other stacks become `<package>.<root>` (`orbit-ledger` →
+  `ledger.orbit`).
+- **Prefix.** `PORTLESS_PREFIX` = the raw branch; portless sanitizes it. It is empty on
+  `main`/`master`/detached HEAD.
+- **Env.** Fronts get every API-URL key found in their `.env*` files (`VITE_API_URL` here) set
+  to the first back's URL. Every non-Bun stack gets `NODE_OPTIONS=--import=<file URL of
+  preload/localhost-dns.mjs>`, appended to any existing value.
+- **Order of output.** `portless proxy start --skip-trust` runs with its output captured
+  (idempotent: "Proxy is already running", exit 0). The URLs are resolved with
+  `portless get --json`. Then the banner goes to stdout — **line 1 is the front's branch URL on
+  its own**, then `name: url` per other stack. Only after that does each stack start, with
+  `portless run --name <app>` in its directory and its output prefixed `[name]`.
+- **Stopping.** Ctrl+C / SIGTERM stops every child tree (`taskkill /T` on Windows). Procfile
+  and Nx stacks are listed as "not launched".
+- `nfp up --print` prints the plan as JSON without starting anything.
+
+Run in both fixture worktrees at the same time (`bun <repo>/src/cli.ts up`):
+
+```
+alpha stdout                                        beta stdout
+https://feat-alpha-search.lumen.localhost           https://fix-beta-sync.lumen.localhost
+api.lumen: https://feat-alpha-search.api.lumen...   api.lumen: https://fix-beta-sync.api.lumen...
+[lumen] > vite --port 4526 --strictPort ...         [lumen] > vite --port 4992 --strictPort ...
+```
+
+`portless list` showed the four routes. e2e against each worktree's line 1
+(`BASE_URL=$(head -n 1 up.out)`, no ignore flag) passed in both at once, 1.1 s each. Killing
+the two `nfp up` trees left no listener on 4000–4999. Unit tests: `test/up.test.ts`.
 
 ## 3. Detection rules
 
@@ -188,7 +223,7 @@ around the whole command.
 | Mode | Runs (wall) | Playwright-reported | Typical |
 | --- | --- | --- | --- |
 | Host `npx playwright test` | 1.70, 1.79, 1.97, 2.31, 3.91 s | 0.66–2.2 s | **~1.9 s** |
-| Docker, derived image `wtp-playwright:1.56.1` (Playwright + `libnss3-tools`), container start + NSS import + bridges | 47.35 (cold), 17.89, 17.89, 17.81, 18.29 s | 8.8–10.2 s | **~17.9 s warm** |
+| Docker, derived image `nfp-playwright:1.56.1` (Playwright + `libnss3-tools`), container start + NSS import + bridges | 47.35 (cold), 17.89, 17.89, 17.81, 18.29 s | 8.8–10.2 s | **~17.9 s warm** |
 
 Most of the Docker cost is container start plus loading `node_modules` over the WSL `/mnt/c` 9P
 mount. The `wsl` hop itself costs about 65 ms. Copying the worktree into a volume, or running
@@ -223,25 +258,25 @@ The installed build defines it in `packages/contracts/src/t3ProjectFile.ts`.
 - Importing copies the script into the project's scripts; it is not a live link. After
   `t3.json` changes, re-import the script.
 
-`wtp t3 scripts [dir] [--dry-run] [--json] [--bin <cmd>] [--preview-url <url>]` is implemented:
+`nfp t3 scripts [dir] [--dry-run] [--json] [--bin <cmd>] [--preview-url <url>]` is implemented:
 - It finds the repository root (works from a worktree, where `.git` is a file).
-- It merges by trimmed script name. A wtp script replaces the fields it sets and keeps any extra
+- It merges by trimmed script name. A nfp script replaces the fields it sets and keeps any extra
   fields; other scripts and top-level keys stay untouched; new scripts are appended.
 - It adds `$schema` when missing, enforces the 50-script limit and the icon list, refuses to
   touch invalid JSON, and reports `created` / `updated` / `unchanged`. A second run reports
   `unchanged` and leaves the bytes the same.
 - Tests: `test/t3.test.ts`.
 
-Output on the fixture (`--bin "bunx wtp"`):
+Output on the fixture (`--bin "bunx nfp"`):
 
 ```json
 {
   "$schema": "https://t3.codes/schema/t3.json",
   "scripts": [
-    { "name": "Ports setup", "command": "bunx wtp setup --quiet", "icon": "configure", "runOnWorktreeCreate": true },
-    { "name": "Dev (portless)", "command": "bunx wtp up", "icon": "play", "runOnWorktreeCreate": false, "stopOnSettle": true },
-    { "name": "E2E", "command": "bunx wtp e2e", "icon": "test", "runOnWorktreeCreate": false },
-    { "name": "E2E (Docker)", "command": "bunx wtp e2e --docker", "icon": "test", "runOnWorktreeCreate": false }
+    { "name": "Ports setup", "command": "bunx nfp setup --quiet", "icon": "configure", "runOnWorktreeCreate": true },
+    { "name": "Dev (portless)", "command": "bunx nfp up", "icon": "play", "runOnWorktreeCreate": false, "stopOnSettle": true },
+    { "name": "E2E", "command": "bunx nfp e2e", "icon": "test", "runOnWorktreeCreate": false },
+    { "name": "E2E (Docker)", "command": "bunx nfp e2e --docker", "icon": "test", "runOnWorktreeCreate": false }
   ]
 }
 ```
@@ -272,16 +307,16 @@ Read-only inspection of `resources/server.asar` (client bundle `_chat-*.js`,
     other than nf-stack's sets a `previewUrl`, and no stored project script contains a
     placeholder.
 - **Clicking a terminal link.** Links printed in a T3 terminal are clickable. With the setting
-  `browserLinkTarget: "app"` they open in the in-app preview; on this machine it is `"system"`.
+  `browserLinkTarget: "app"` they open in the in-app preview. Pablo switched it to `"app"` in A3.
 - **Agents** can open any URL in the preview through T3's preview tools (`preview_open`).
 
 Closest working setups that keep the subdomain named after the branch:
 
-1. **Recommended.** `wtp up` prints `https://<branch>.<app>.localhost` (from `portless get`) as
+1. **Recommended, implemented in A3.** `nfp up` prints `https://<branch>.<app>.localhost` (from `portless get`) as
    the first stdout line, and the Dev script has no `previewUrl`. With `browserLinkTarget: "app"`,
    one click opens the branch URL in T3's preview. If nobody clicks, "Local servers" still lists
    the thread's own dev server automatically (port URL). When an agent runs the stack, it calls
-   `preview_open` with `wtp url web`.
+   `preview_open` with `nfp url web`.
 2. **Main-checkout only.** Pass `--preview-url https://lumen.localhost` (no prefix on
    `main`/`master`) to get `autoOpenPreview` in the main checkout. Worktree threads would open
    main's app, so this is not the default.
@@ -289,8 +324,9 @@ Closest working setups that keep the subdomain named after the branch:
    (`portless alias`). It is per machine, not per thread, so two running worktrees fight over
    it.
 4. **T3 feature request:** expand `${env:VAR}` or a `{branch}` / `{worktree}` token in
-   `previewUrl` before `ph`. `wtp` could then write
-   `previewUrl: "https://{branch}.lumen.localhost"`.
+   `previewUrl` before `ph`. `nfp` could then write
+   `previewUrl: "https://{branch}.lumen.localhost"`. Draft (not posted):
+   [`docs/t3-preview-url-issue.md`](t3-preview-url-issue.md).
 
 ## 6. Server-to-server calls by name without admin
 
@@ -308,26 +344,96 @@ C only on Pablo's explicit choice.** Evidence:
   `feat-alpha-search.api.lumen.localhost:<port>`, and `dns.promises.lookup` answers while other
   names are left alone.
 
-## 7. Recommended design
+## 7. E2E with no window on screen (A3)
 
-Working name `worktree-ports`, binary `wtp` (still provisional). "treeport" was a coined word:
-work*tree* + *port*. Other candidates: `wtport`, `lanes`, `forkport`.
+Question: can e2e run on the host with no Docker and with no browser or Electron window popping
+up or taking focus? Inspected read-only in an Electron + web project that uses Playwright 1.65
+and Electron 45. Measured in a throwaway Electron fixture
+(`C:\Desarrollo\scratch-electron-hidden`, "Driftwood", same Electron and Playwright versions).
+
+### 7a. Browser projects
+
+Playwright browser projects are **headless by default**. Nothing in that project forces headed:
+the config sets no `headless`, `channel` or `launchOptions`, the package scripts pass no
+`--headed`/`--ui`/`--debug`, and no `PWDEBUG` is set. The one explicit launch in the specs is
+`chromium.launch({ headless: true })`. Browser windows appear only with `--headed`, `--ui`,
+`--debug` or `PWDEBUG=1`.
+
+### 7b. Electron (`_electron.launch` has no headless mode)
+
+In the inspected app, `createWindow()` uses `new BrowserWindow({ show: false, … })` and then
+`once("ready-to-show", () => win.show())`. On Windows, `show()` activates the window, so it jumps
+in front. The `second-instance` handler also calls `show()` + `focus()`, and one spec exercises
+it. All 14 `electron.launch` sites spread `process.env` into the app, so a variable set when
+Playwright starts reaches the app.
+
+Measured in the fixture (one spec: render, fill, click, CSS transition, 500 ms of
+`requestAnimationFrame`, screenshot):
+
+| Mode | App change | On screen / focus | rAF frames in 500 ms | Screenshot | Wall |
+| --- | --- | --- | --- | --- | --- |
+| Default (`show()`) | — | visible, **focused** | 52 | ok | 2.98 s |
+| `show: false` never shown + `paintWhenInitiallyHidden` + `backgroundThrottling: false` | env flag | not visible, not focused | **0** (rAF stops; the transition still ends) | ok | test failed on the rAF check |
+| **Offscreen: `x/y = -32000`, `skipTaskbar`, `showInactive()`** | env flag | off every monitor, **not focused**, no taskbar button | 52 | ok | 2.26–2.60 s |
+| **Hidden Win32 desktop** (`CreateDesktop` + `STARTUPINFO.lpDesktop`), app unchanged | none | visible and focused only on a desktop nobody looks at | 53 | ok | 2.65 s |
+| WSL2 Docker `xvfb-run` (image = Playwright 1.65 + Electron 45, sources mounted, `--no-sandbox`) | none (Linux build of the app) | inside Xvfb | 31 | ok | 2.23–2.77 s warm; once: base pull 89 s, image build 28 s |
+
+Findings:
+- **Never showing the window is not safe**: Chromium stops `requestAnimationFrame` for a window
+  that was never shown, even with `paintWhenInitiallyHidden` and `backgroundThrottling: false`.
+  Animation libraries, virtualized lists and anything waiting on rAF would hang.
+- **The offscreen inactive window** keeps the page "visible" (rAF, transitions, screenshots,
+  focus inside the page all work) and never activates. It is the best app-side option.
+- **The hidden Win32 desktop needs no app change.**
+  - A launcher creates a desktop object on the user's window station and starts
+    `npx playwright test` with `lpDesktop` set to it. Every child (Electron, Chromium, web
+    servers) inherits it.
+  - It was verified with the unmodified default mode: the window was shown and focused, but
+    only on that desktop.
+  - Caveats: it is Windows-only. The launcher is about 40 lines of C#/PowerShell P/Invoke (
+    `scripts/hidden-desktop.ps1`, the exact launcher used for the measurement). Nobody can watch or debug
+    the run on screen. "Invisible on Pablo's desktop" follows from how Windows desktops work, but
+    it still needs his visual confirmation.
+- **A second virtual desktop (Win+Ctrl+D) is not a fit.** New windows open on the active
+  virtual desktop. Moving another process's window there needs the undocumented
+  `IVirtualDesktopManagerInternal` COM interface or a third-party tool, and it would still flash
+  first.
+- **WSL/Docker + xvfb** is fast for a small app once the image exists. For a real app it also
+  needs a Linux build (Linux Electron binary, native modules, pnpm install inside the container)
+  and network paths to the backend/database. That is the CI-like option, not the everyday one.
+
+### 7c. How `nfp e2e` exposes it
+
+- `nfp e2e --hidden` sets `NFP_E2E_HIDDEN=1` for the Playwright process. An app opts in by
+  naming its own variable in `nfp.json` (`"e2e": { "hiddenEnv": "APP_E2E_HIDDEN_WINDOW" }`), and
+  nfp sets that too.
+- When no variable is declared, or `--hidden=desktop` is passed, nfp starts Playwright on a
+  hidden Win32 desktop (`nfp-e2e-<branch>`) and streams its output back through a log file. The
+  exit code is the test exit code.
+- Browser projects need nothing: nfp just doesn't pass `--headed`. `--headed`/`--ui` and
+  `--hidden` are mutually exclusive.
+- `--docker` stays the isolated option.
+
+## 8. Recommended design
+
+Name decided in A3: repository `nf-ports`, binary `nfp`. `--bin` defaults to `nfp`, which Pablo installs globally.
 
 **Wrap the portless CLI**: it has a stable `--json` contract and owns worktree naming. Pin its
 version as a dependency.
 
 | Command | Does |
 | --- | --- |
-| `wtp detect [--json]` | Implemented |
-| `wtp t3 scripts` | Implemented: writes or merges `t3.json` by name |
-| `wtp setup [--quiet]` | Once per machine: start the proxy, trust the CA with no timeout, check for Docker in WSL. No-op when ready (`runOnWorktreeCreate`) |
-| `wtp up` | Per stack: `portless run --name <app>` with `PORTLESS_PREFIX=<sanitized branch>` and the proxy on `--skip-trust`. Injects the API URL into fronts and `NODE_OPTIONS` (preload) into Node stacks. Prints the branch URLs, front first |
-| `wtp e2e [--headed\|--ui] [-- args]` | Host by default: injects `BASE_URL` (or the wrapper config) and `NODE_OPTIONS=--use-system-ca` |
-| `wtp e2e --docker` | Opt-in: derived image matching the installed Playwright, Windows bridge + in-container bridge, NSS import of the CA |
-| `wtp url <stack>` | `portless get` with the same prefix |
-| `wtp doctor [--json]` | portless doctor + CA in the user Root store + WSL gateway + image/version checks |
+| `nfp detect [--json]` | Implemented |
+| `nfp t3 scripts` | Implemented: writes or merges `t3.json` by name |
+| `nfp setup [--quiet]` | Once per machine: start the proxy, trust the CA with no timeout, check for Docker in WSL. No-op when ready (`runOnWorktreeCreate`) |
+| `nfp up [--print]` | Implemented. Per stack: `portless run --name <app>` with `PORTLESS_PREFIX=<sanitized branch>` and the proxy on `--skip-trust`. Injects the API URL into fronts and `NODE_OPTIONS` (preload) into Node stacks. Prints the branch URLs, front first |
+| `nfp e2e [--headed\|--ui] [-- args]` | Host by default: injects `BASE_URL` (or the wrapper config) and `NODE_OPTIONS=--use-system-ca` |
+| `nfp e2e --hidden` | Host run with no window on screen (§7c). Sets the app's documented env var when `nfp.json` names one, otherwise runs on a hidden Win32 desktop |
+| `nfp e2e --docker` | Opt-in: derived image matching the installed Playwright, Windows bridge + in-container bridge, NSS import of the CA |
+| `nfp url <stack>` | `portless get` with the same prefix |
+| `nfp doctor [--json]` | portless doctor + CA in the user Root store + WSL gateway + image/version checks |
 
-Config: none by default. An optional `wtp.json` can override detected names, the API env var,
+Config: none by default. An optional `nfp.json` can override detected names, the API env var,
 the e2e command and the image.
 
 ## Cleanup
@@ -345,5 +451,7 @@ npm rm -g portless
 Fixture: run `git worktree remove` on both worktrees, then delete
 `C:\Desarrollo\scratch-portless-fixture`.
 
+Electron fixture: delete `C:\Desarrollo\scratch-electron-hidden`.
+
 Images:
-`wsl -d Ubuntu-24.04 -- docker rmi wtp-playwright:1.56.1 mcr.microsoft.com/playwright:v1.56.1-noble`.
+`wsl -d Ubuntu-24.04 -- docker rmi nfp-playwright:1.56.1 nfp-electron-xvfb:45.2.3 mcr.microsoft.com/playwright:v1.56.1-noble`.
