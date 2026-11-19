@@ -1,0 +1,6 @@
+{
+  "apps": {
+    "apps/web": { "name": "lumen" },
+    "apps/api": { "name": "api.lumen" }
+  }
+}

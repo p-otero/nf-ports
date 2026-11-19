@@ -1,0 +1,1 @@
+{ "name": "orbit-site", "scripts": { "dev": "next dev --port 3100" }, "dependencies": { "next": "15.0.0" } }

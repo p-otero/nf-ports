@@ -1,0 +1,3 @@
+web: bin/serve --port 3200
+worker: bin/jobs
+api: bin/api -p $PORT

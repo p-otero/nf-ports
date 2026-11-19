@@ -1,0 +1,21 @@
+{
+  "name": "worktree-ports",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "wtp": "src/cli.ts"
+  },
+  "scripts": {
+    "lint": "oxlint --deny-warnings src test",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "verify": "bun run lint && bun run typecheck && bun run test"
+  },
+  "devDependencies": {
+    "@p-otero/oxlint-rules": "github:p-otero/oxlint-rules#835a22baa11bdd98e5e2d5818de71dc84e66849d",
+    "@types/bun": "1.4.4",
+    "oxlint": "1.92.0",
+    "typescript": "7.0.2"
+  }
+}
