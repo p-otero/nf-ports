@@ -23,6 +23,9 @@ never fails the install and does nothing when `CI` is set. It runs from your pro
 
 portless comes as a dependency; no global install is needed. Node 22.15 or later.
 
+nf-ports wraps the portless CLI. portless is a Vercel Labs project under the Apache-2.0
+license; nf-ports is not affiliated with it.
+
 ## Commands
 
 ```sh
