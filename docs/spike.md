@@ -26,7 +26,7 @@ Fixture: `C:\Desarrollo\scratch-portless-fixture` ("Lumen Notes", invented names
 | `e2e --docker` | Opt-in. Works with real CA trust inside the container; about 17.9 s warm and 47 s cold |
 | Node server-to-server by name | Use the `--import` DNS preload (shipped in `preload/`), plus the CA that portless already injects |
 | T3 | `nfp t3 scripts` writes or merges `t3.json` at the repo root by script name (implemented) |
-| Per-worktree preview URL | No placeholder support in this T3 build. `nfp up` prints the branch URL as the first line, so with `browserLinkTarget: "app"` one click opens it in T3's preview (§5). Feature request draft: `docs/t3-preview-url-issue.md` |
+| Per-worktree preview URL | No placeholder support in this T3 build. `nfp up` prints the branch URL as the first line, so with `browserLinkTarget: "app"` one click opens it in T3's preview (§5). Feature request posted as [discussion #38888](https://github.com/pingdotgg/t3code/discussions/38888) (`docs/t3-preview-url-issue.md`) |
 | `nfp up` | Implemented and verified in both worktrees at once (§2b). Front↔back wiring, `<NAME>_PORT` backs and `nfp.json` added in A4 (§9) |
 | `nfp setup`, `nfp e2e`, `nfp url` | Implemented in A4 and verified on the fixture worktrees (§9); `e2e --docker` not implemented |
 | E2E with no window on screen | Browser projects are headless by default. For Electron: a hidden Win32 desktop needs no app change; an offscreen `showInactive()` env flag needs a small app change (§7) |
@@ -326,7 +326,7 @@ Closest working setups that keep the subdomain named after the branch:
    it.
 4. **T3 feature request:** expand `${env:VAR}` or a `{branch}` / `{worktree}` token in
    `previewUrl` before `ph`. `nfp` could then write
-   `previewUrl: "https://{branch}.lumen.localhost"`. Draft (not posted):
+   `previewUrl: "https://{branch}.lumen.localhost"`. Posted as [discussion #38888](https://github.com/pingdotgg/t3code/discussions/38888):
    [`docs/t3-preview-url-issue.md`](t3-preview-url-issue.md).
 
 ## 6. Server-to-server calls by name without admin

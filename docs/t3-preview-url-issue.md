@@ -1,6 +1,6 @@
 # Feature request: per-thread variables in a script's `previewUrl`
 
-Status: draft for review. Not posted.
+Status: posted 2026-11-19 by p-otero as discussion [pingdotgg/t3code#38888](https://github.com/pingdotgg/t3code/discussions/38888) (Ideas). Related closed PR: [#21222](https://github.com/pingdotgg/t3code/pull/21222), per-worktree preview ports, closed pending agreement on scope.
 
 ## Summary
 
