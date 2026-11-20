@@ -1,6 +1,6 @@
 # Spike NF-051: per-worktree ports and names through portless
 
-Attempts: A1, A2 and A3, 2026-11-19. Repository `nf-ports`, binary `nfp`. Machine: Windows 11 Pro 10.0.26200, non-admin user,
+Attempts: A1, A2 and A3, 2026-11-19; A4, 2026-11-20. Repository `nf-ports`, binary `nfp`. Machine: Windows 11 Pro 10.0.26200, non-admin user,
 Git Bash and PowerShell 5.1.
 
 Versions: portless 0.18.1 (npm, global), Node 24.13.0, Bun 1.4.4, Vite 7.2.2,
@@ -27,7 +27,8 @@ Fixture: `C:\Desarrollo\scratch-portless-fixture` ("Lumen Notes", invented names
 | Node server-to-server by name | Use the `--import` DNS preload (shipped in `preload/`), plus the CA that portless already injects |
 | T3 | `nfp t3 scripts` writes or merges `t3.json` at the repo root by script name (implemented) |
 | Per-worktree preview URL | No placeholder support in this T3 build. `nfp up` prints the branch URL as the first line, so with `browserLinkTarget: "app"` one click opens it in T3's preview (§5). Feature request draft: `docs/t3-preview-url-issue.md` |
-| `nfp up` | Implemented and verified in both worktrees at once (§2b) |
+| `nfp up` | Implemented and verified in both worktrees at once (§2b). Front↔back wiring, `<NAME>_PORT` backs and `nfp.json` added in A4 (§9) |
+| `nfp setup`, `nfp e2e`, `nfp url` | Implemented in A4 and verified on the fixture worktrees (§9); `e2e --docker` not implemented |
 | E2E with no window on screen | Browser projects are headless by default. For Electron: a hidden Win32 desktop needs no app change; an offscreen `showInactive()` env flag needs a small app change (§7) |
 
 ## 1. portless on Windows
@@ -276,7 +277,7 @@ Output on the fixture (`--bin "bunx nfp"`):
     { "name": "Ports setup", "command": "bunx nfp setup --quiet", "icon": "configure", "runOnWorktreeCreate": true },
     { "name": "Dev (portless)", "command": "bunx nfp up", "icon": "play", "runOnWorktreeCreate": false, "stopOnSettle": true },
     { "name": "E2E", "command": "bunx nfp e2e", "icon": "test", "runOnWorktreeCreate": false },
-    { "name": "E2E (Docker)", "command": "bunx nfp e2e --docker", "icon": "test", "runOnWorktreeCreate": false }
+    { "name": "E2E (hidden)", "command": "bunx nfp e2e --hidden", "icon": "test", "runOnWorktreeCreate": false }
   ]
 }
 ```
@@ -425,16 +426,65 @@ version as a dependency.
 | --- | --- |
 | `nfp detect [--json]` | Implemented |
 | `nfp t3 scripts` | Implemented: writes or merges `t3.json` by name |
-| `nfp setup [--quiet]` | Once per machine: start the proxy, trust the CA with no timeout, check for Docker in WSL. No-op when ready (`runOnWorktreeCreate`) |
+| `nfp setup [--quiet]` | Implemented: start the proxy, trust the CA with no timeout. No-op when ready (`runOnWorktreeCreate`). Docker check deferred with `--docker` |
 | `nfp up [--print]` | Implemented. Per stack: `portless run --name <app>` with `PORTLESS_PREFIX=<sanitized branch>` and the proxy on `--skip-trust`. Injects the API URL into fronts and `NODE_OPTIONS` (preload) into Node stacks. Prints the branch URLs, front first |
-| `nfp e2e [--headed\|--ui] [-- args]` | Host by default: injects `BASE_URL` (or the wrapper config) and `NODE_OPTIONS=--use-system-ca` |
-| `nfp e2e --hidden` | Host run with no window on screen (§7c). Sets the app's documented env var when `nfp.json` names one, otherwise runs on a hidden Win32 desktop |
-| `nfp e2e --docker` | Opt-in: derived image matching the installed Playwright, Windows bridge + in-container bridge, NSS import of the CA |
-| `nfp url <stack>` | `portless get` with the same prefix |
+| `nfp e2e [--headed\|--ui] [-- args]` | Implemented: injects `BASE_URL` (or the wrapper config) and `NODE_OPTIONS=--use-system-ca` + preload |
+| `nfp e2e --hidden` | Implemented (§7c, §9). Sets the app's env var when `nfp.json` names one, otherwise runs on a hidden Win32 desktop |
+| `nfp e2e --docker` | Not implemented. Opt-in: derived image matching the installed Playwright, Windows bridge + in-container bridge, NSS import of the CA |
+| `nfp url [app]` | Implemented: `portless get` with the same prefix |
 | `nfp doctor [--json]` | portless doctor + CA in the user Root store + WSL gateway + image/version checks |
 
-Config: none by default. An optional `nfp.json` can override detected names, the API env var,
-the e2e command and the image.
+Config: none by default. An optional `nfp.json` overrides names, roles and the port variable per
+app, adds env with `{url:<app>}` / `{branch}` templates, and picks the e2e config, the app's hidden
+variable and extra e2e env (README).
+
+## 9. A4: `setup`, `e2e`, `url` and front/back wiring (2026-11-20)
+
+### Front and back in one workspace
+
+`nfp up` now also:
+- sets origin keys found in a back's `.env*` (`CORS_ORIGIN(S)`, `ALLOWED_ORIGIN(S)`, `ORIGIN`,
+  `FRONTEND|FRONT|WEB|APP|CLIENT|SITE|UI|PUBLIC` + `_URL|_ORIGIN`) to the first front's URL;
+- detects a server entry that reads `<NAME>_PORT` instead of `PORT`, picks a free port in
+  4000–4999, passes it with `portless run --app-port` and sets that variable;
+- applies `nfp.json` (`name`, `role`, `portEnv`, `env` templates) and prints stack warnings;
+- warns in `detect`/`up` when a dev script pins `--port N` for a framework that portless only
+  moves through `PORT` (Next `--port 3100` in orbit-turbo). Not fixed automatically.
+
+Not covered yet: Vite `server.proxy` / Next `rewrites` with a literal target, more than one back
+per front (the first back wins unless `nfp.json` says otherwise), Compose services, non-JS stacks.
+
+### `nfp e2e`
+
+- Picks the first Playwright config (or `e2e.config`), else Cypress, and refuses to run when
+  `portless list` has no route for this worktree's front.
+- Playwright with `baseURL` from env and a conditional `webServer`: sets that variable.
+  With a literal `baseURL` or a `webServer: {…}`/`[…]` literal: writes
+  `.nfp-playwright.config.<ext>` next to the config (spreads it, drops `webServer`, sets
+  `use.baseURL` and each project's), passes `--config`, deletes it afterwards.
+- Cypress: `CYPRESS_BASE_URL`, `cypress run` or `open` with `--ui`.
+- `NODE_OPTIONS` gets `--use-system-ca` and the DNS preload. `ELECTRON_OVERRIDE_DIST_PATH` and the
+  rest of the environment pass through untouched.
+- `--hidden`: `NFP_E2E_HIDDEN=1` plus `e2e.hiddenEnv=1` when declared; with no declared
+  variable, or `--hidden=desktop`, `scripts/hidden-desktop.ps1` runs the command on desktop
+  `nfp-e2e-<branch>`. Output is redirected to a temp log that nfp tails, and the exit code is the
+  runner's.
+
+### Evidence (fixture worktrees alpha and beta, plus a throwaway gamma)
+
+| Check | Result |
+| --- | --- |
+| `nfp setup` with the proxy stopped and the CA already trusted | `proxy: running`, `CA: trusted`, 9.3 s (proxy cold start); 3.5 s when the proxy runs |
+| `nfp up` in alpha and beta at once | 4 routes; first lines are the branch URLs |
+| `nfp url`, `nfp url api` in alpha | `https://feat-alpha-search.lumen.localhost`, `…api.lumen.localhost` |
+| `nfp e2e` in alpha and beta at once | 1 passed each. Cold runs took ~30 s; plain `npx playwright test` also took 38 s cold, so it is machine warm-up. Warm: 1.0–1.4 s test time, same as without nfp |
+| `nfp e2e --hidden` (desktop) in alpha | 1 passed (869 ms), output streamed back, exit 0; with a wrong `EXPECT_BRANCH`, 1 failed and exit 1. No log or wrapper left behind |
+| gamma: api reads `API_PORT`, `.env` has `CORS_ORIGIN=http://localhost:5173`, `nfp.json` sets `RELEASE_LABEL: "{branch}"` and e2e `EXPECT_BRANCH: "{branch}"` | API answered `{"branch":"feat/gamma-wire","port":4484,"origin":"https://feat-gamma-wire.lumen.localhost","release":"feat/gamma-wire"}`, with portless reporting `Using port 4484 (fixed)` |
+| gamma: Playwright with literal `baseURL` and an unconditional `webServer` | Wrapper config used, 1 passed (1.8 s) |
+| After stopping the three `nfp up` trees | No routes; no nfp listener on 4000–4999 |
+
+Unit tests: `test/config.test.ts`, `test/e2e.test.ts`, new cases in `test/up.test.ts` and
+`test/detect.test.ts`, fixture `test/fixtures/harbor-split`.
 
 ## Cleanup
 

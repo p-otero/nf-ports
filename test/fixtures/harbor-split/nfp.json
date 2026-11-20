@@ -1,0 +1,11 @@
+{
+  "apps": {
+    "services/core": {
+      "env": { "AUTH_CALLBACK_URL": "{url:front}/auth/callback", "RELEASE_LABEL": "{branch}" }
+    }
+  },
+  "e2e": {
+    "hiddenEnv": "HARBOR_E2E_HIDDEN_WINDOW",
+    "env": { "HARBOR_API_URL": "{url:core}" }
+  }
+}

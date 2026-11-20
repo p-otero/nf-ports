@@ -26,8 +26,8 @@ export const t3ScriptsFor = (report: DetectReport, options: ScriptOptions): T3Sc
   if (report.e2e.length === 0) return scripts;
   scripts.push({ name: "E2E", command: `${options.bin} e2e`, icon: "test", runOnWorktreeCreate: false });
   scripts.push({
-    name: "E2E (Docker)",
-    command: `${options.bin} e2e --docker`,
+    name: "E2E (hidden)",
+    command: `${options.bin} e2e --hidden`,
     icon: "test",
     runOnWorktreeCreate: false,
   });

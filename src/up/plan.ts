@@ -2,11 +2,16 @@ import { join } from "node:path";
 import type { DetectReport, Stack } from "../detect/types.ts";
 import { isRecord, parseEnv, readJson, readText } from "../detect/files.ts";
 import { envFiles } from "../detect/ports.ts";
+import { type AppConfig, emptyConfig, expandTemplate, type NfpConfig, normalizeDirectory } from "../config.ts";
 
 export const preloadUrl = new URL("../../preload/localhost-dns.mjs", import.meta.url).href;
 
+export const portPlaceholder = "{port}";
+
 const defaultBranches = new Set(["main", "master", "HEAD", ""]);
 const apiUrlKey = /API\w*(URL|ORIGIN|BASE|HOST)\b|^(VITE_|NEXT_PUBLIC_|PUBLIC_|NUXT_PUBLIC_)?BACKEND_URL$/i;
+const frontUrlKey =
+  /^(?:CORS_ORIGINS?|ALLOWED_ORIGINS?|ORIGIN|(?:FRONTEND|FRONT|WEB|APP|CLIENT|SITE|UI|PUBLIC)_(?:URL|ORIGIN))$/i;
 
 export type Launch = {
   readonly stack: string;
@@ -14,13 +19,16 @@ export type Launch = {
   readonly directory: string;
   readonly role: Stack["role"];
   readonly url: string;
+  readonly appPort: boolean;
   readonly env: Readonly<Record<string, string>>;
 };
 
 export type UpPlan = {
+  readonly branch: string;
   readonly prefix: string;
   readonly launches: readonly Launch[];
   readonly skipped: readonly string[];
+  readonly warnings: readonly string[];
 };
 
 export type UrlResolver = (name: string, prefix: string) => string;
@@ -29,12 +37,12 @@ export const worktreePrefix = (branch: string): string => (defaultBranches.has(b
 
 const shortName = (name: string): string => name.replace(/^@[^/]+\//, "");
 
-const configuredNames = (root: string): Map<string, string> => {
+const portlessNames = (root: string): Map<string, string> => {
   const config = readJson(join(root, "portless.json"));
   const apps = isRecord(config) && isRecord(config["apps"]) ? config["apps"] : {};
   return new Map(
     Object.entries(apps).flatMap(([directory, app]) =>
-      isRecord(app) && typeof app["name"] === "string" ? [[directory.replace(/\/+$/, ""), app["name"]]] : [],
+      isRecord(app) && typeof app["name"] === "string" ? [[normalizeDirectory(directory), app["name"]]] : [],
     ),
   );
 };
@@ -45,64 +53,108 @@ const baseName = (root: string, fallback: string): string => {
   return shortName(name).toLowerCase();
 };
 
-const appName = (stack: Stack, base: string, isPrimaryFront: boolean, configured: Map<string, string>): string => {
-  const fromConfig = configured.get(stack.directory);
-  if (fromConfig) return fromConfig;
+const derivedName = (stack: Stack, base: string, isPrimaryFront: boolean): string => {
   if (isPrimaryFront) return base;
   const label = shortName(stack.name).toLowerCase().replace(new RegExp(`^${base}-`), "");
   return `${label}.${base}`;
 };
 
-export const apiUrlKeys = (directory: string): string[] => {
+const envKeys = (directory: string, pattern: RegExp): string[] => {
   const keys = envFiles.flatMap((file) => {
     const text = readText(join(directory, file));
     return text === null ? [] : Object.keys(parseEnv(text));
   });
-  return [...new Set(keys.filter((key) => apiUrlKey.test(key)))];
+  return [...new Set(keys.filter((key) => pattern.test(key)))];
 };
+
+export const apiUrlKeys = (directory: string): string[] => envKeys(directory, apiUrlKey);
+
+export const frontUrlKeys = (directory: string): string[] => envKeys(directory, frontUrlKey);
 
 const usesNode = (stack: Stack): boolean => !/^bunx?\b/.test(stack.devCommand?.value ?? "");
 
 const withPreload = (existing: string | undefined): string =>
   [existing, `--import=${preloadUrl}`].filter((part): part is string => Boolean(part)).join(" ");
 
+type Entry = {
+  readonly stack: Stack;
+  readonly app: AppConfig;
+  readonly role: Stack["role"];
+  readonly name: string;
+  readonly url: string;
+};
+
+const matches = (entry: Entry, reference: string): boolean =>
+  [entry.name, entry.stack.name, shortName(entry.stack.name), entry.stack.directory].includes(reference);
+
 export const planUp = (
   report: DetectReport,
   branch: string,
   resolveUrl: UrlResolver,
   nodeOptions: string | undefined = process.env["NODE_OPTIONS"],
+  config: NfpConfig = emptyConfig,
 ): UpPlan => {
   const prefix = worktreePrefix(branch);
-  const configured = configuredNames(report.root);
+  const fromPortless = portlessNames(report.root);
   const base = baseName(report.root, report.root.split(/[\\/]/).at(-1) ?? "app");
   const runnable = report.stacks.filter((stack) => stack.devCommand?.source.startsWith("package.json") ?? false);
   const skipped = report.stacks.filter((stack) => !runnable.includes(stack)).map((stack) => stack.name);
-  const ordered = [...runnable.filter((stack) => stack.role === "front"), ...runnable.filter((stack) => stack.role !== "front")];
-  const primaryFront = ordered.find((stack) => stack.role === "front");
-
-  const named = ordered.map((stack) => {
-    const name = appName(stack, base, stack === primaryFront, configured);
-    return { stack, name, url: resolveUrl(name, prefix) };
+  const configured = runnable.map((stack) => {
+    const app = config.apps[normalizeDirectory(stack.directory)] ?? {};
+    return { stack, app, role: app.role ?? stack.role };
   });
-  const firstBack = named.find((entry) => entry.stack.role === "back");
+  const ordered = [
+    ...configured.filter((entry) => entry.role === "front"),
+    ...configured.filter((entry) => entry.role !== "front"),
+  ];
+  const primaryFront = ordered.find((entry) => entry.role === "front");
 
-  const launches = named.map(({ stack, name, url }): Launch => {
+  const entries: Entry[] = ordered.map((entry) => {
+    const name =
+      entry.app.name ??
+      fromPortless.get(normalizeDirectory(entry.stack.directory)) ??
+      derivedName(entry.stack, base, entry === primaryFront);
+    return { stack: entry.stack, app: entry.app, role: entry.role, name, url: resolveUrl(name, prefix) };
+  });
+  const firstFront = entries.find((entry) => entry.role === "front");
+  const firstBack = entries.find((entry) => entry.role === "back");
+  const lookup = (reference: string): string | null => {
+    if (reference === "front") return firstFront?.url ?? null;
+    if (reference === "back") return firstBack?.url ?? null;
+    return entries.find((entry) => matches(entry, reference))?.url ?? null;
+  };
+
+  const launches = entries.map(({ stack, app, role, name, url }): Launch => {
     const directory = join(report.root, stack.directory);
-    const apiEnv =
-      stack.role === "front" && firstBack
-        ? Object.fromEntries(apiUrlKeys(directory).map((key) => [key, firstBack.url]))
-        : {};
+    const wired: Record<string, string> = {};
+    if (role === "front" && firstBack) for (const key of apiUrlKeys(directory)) wired[key] = firstBack.url;
+    if (role === "back" && firstFront) for (const key of frontUrlKeys(directory)) wired[key] = firstFront.url;
+    const portEnv = app.portEnv ?? stack.portEnv;
+    if (portEnv) wired[portEnv] = portPlaceholder;
     const nodeEnv: Record<string, string> = usesNode(stack) ? { NODE_OPTIONS: withPreload(nodeOptions) } : {};
-    return {
-      stack: stack.name,
-      name,
-      directory,
-      role: stack.role,
-      url,
-      env: { PORTLESS_PREFIX: prefix, ...apiEnv, ...nodeEnv },
-    };
+    const extra = Object.fromEntries(
+      Object.entries(app.env ?? {}).map(([key, template]) => [
+        key,
+        expandTemplate(template, { branch, url: lookup }, `nfp.json apps.${stack.directory}.env.${key}`),
+      ]),
+    );
+    const env = { PORTLESS_PREFIX: prefix, ...wired, ...nodeEnv, ...extra };
+    const appPort = Object.values(env).some((value) => value.includes(portPlaceholder));
+    return { stack: stack.name, name, directory, role, url, appPort, env };
   });
-  return { prefix, launches, skipped };
+  const warnings = entries.flatMap(({ stack, name }) => stack.warnings.map((warning) => `${name}: ${warning}`));
+  return { branch, prefix, launches, skipped, warnings };
+};
+
+export const findLaunch = (plan: UpPlan, reference: string | undefined): Launch | undefined => {
+  if (reference === undefined || reference === "front") {
+    return plan.launches.find((launch) => launch.role === "front") ?? plan.launches[0];
+  }
+  if (reference === "back") return plan.launches.find((launch) => launch.role === "back");
+  return plan.launches.find((launch) =>
+    [launch.name, launch.stack, shortName(launch.stack)].includes(reference) ||
+    normalizeDirectory(launch.directory).endsWith(`/${normalizeDirectory(reference)}`),
+  );
 };
 
 export const formatBanner = (plan: UpPlan): string[] => {

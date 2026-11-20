@@ -6,7 +6,7 @@ const formatStack = (stack: Stack): string[] => {
     `  ${stack.name}  [${stack.role}${stack.framework ? `, ${stack.framework}` : ""}]  ${stack.directory}`,
     `    dev:      ${stack.devCommand ? `${stack.devCommand.value}  (${stack.devCommand.source})` : "not found"}`,
     `    port:     ${stack.effectivePort ?? "unknown"}  <- ${ports}`,
-    `    override: ${stack.portOverride}`,
+    `    override: ${stack.portEnv ? `env:${stack.portEnv} (nfp up picks the port)` : stack.portOverride}`,
     ...stack.warnings.map((warning) => `    warning:  ${warning}`),
   ];
 };

@@ -12,7 +12,7 @@ export type PortFinding = {
   readonly kind: "env-file" | "config" | "script-flag" | "framework-default";
 };
 
-export type PortOverride = "env:PORT" | "flag:--port" | "env:PORT+flag:--port" | "manual";
+export type PortOverride = "env:PORT" | "flag:--port" | "env:PORT+flag:--port" | "env:other" | "manual";
 
 export type Stack = {
   readonly name: string;
@@ -23,6 +23,7 @@ export type Stack = {
   readonly ports: readonly PortFinding[];
   readonly effectivePort: number | null;
   readonly portOverride: PortOverride;
+  readonly portEnv: string | null;
   readonly warnings: readonly string[];
 };
 

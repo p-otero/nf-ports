@@ -7,7 +7,8 @@ import { effectivePort, envPorts, scriptFlagPorts, sourcePorts } from "./ports.t
 const devScriptNames = ["dev", "start:dev", "serve", "start"] as const;
 const serverRunner = /^(?:node|bun|tsx|ts-node|deno|nodemon)\b/;
 const serverEntry = /([\w./-]+\.(?:[cm]?[jt]s))\b/;
-const readsPort = /(?:process|Bun)\.env\.PORT|env\[["']PORT["']\]|env\.PORT/;
+const readsPort = /(?:process|Bun)\.env\.PORT\b|env\[["']PORT["']\]|env\.PORT\b/;
+const otherPortEnv = /env(?:\.([A-Z][A-Z0-9_]*PORT)\b|\[["']([A-Z][A-Z0-9_]*PORT)["']\])/;
 
 type Manifest = {
   readonly name: string | null;
@@ -41,10 +42,19 @@ const findFramework = (directory: string, manifest: Manifest): Framework | null 
       firstExisting(directory, framework.configs) !== null,
   ) ?? null;
 
+const portEnvOf = (entryText: string | null): string | null => {
+  if (entryText === null || readsPort.test(entryText)) return null;
+  const match = otherPortEnv.exec(entryText);
+  return match?.[1] ?? match?.[2] ?? null;
+};
+
 const entryWarnings = (entryText: string | null): string[] => {
   if (entryText === null) return [];
   const warnings: string[] = [];
-  if (!readsPort.test(entryText)) {
+  const portEnv = portEnvOf(entryText);
+  if (portEnv) {
+    warnings.push(`server entry reads ${portEnv}, not PORT; nfp up picks the port and sets ${portEnv}`);
+  } else if (!readsPort.test(entryText)) {
     warnings.push("server entry never reads PORT; portless cannot move it without a code change");
   }
   if (/override\s*:\s*true/.test(entryText)) {
@@ -57,6 +67,7 @@ type EntryAnalysis = {
   readonly ports: PortFinding[];
   readonly warnings: string[];
   readonly readsPort: boolean;
+  readonly portEnv: string | null;
 };
 
 const analyzeEntry = (directory: string, prefix: string, command: string): EntryAnalysis | null => {
@@ -67,6 +78,7 @@ const analyzeEntry = (directory: string, prefix: string, command: string): Entry
     ports: sourcePorts(join(directory, entry), `${prefix}${entry}`),
     warnings: entryWarnings(text),
     readsPort: text !== null && readsPort.test(text),
+    portEnv: portEnvOf(text),
   };
 };
 
@@ -100,7 +112,15 @@ export const detectStack = (root: string, relativeDirectory: string): Stack | nu
   ];
 
   const role: StackRole = framework?.role ?? (entry ? "back" : "unknown");
-  const fallbackOverride: PortOverride = entry?.readsPort ? "env:PORT" : "manual";
+  const fallbackOverride: PortOverride = entry?.readsPort ? "env:PORT" : entry?.portEnv ? "env:other" : "manual";
+  const portOverride: PortOverride = entry?.portEnv ? "env:other" : (framework?.override ?? fallbackOverride);
+  const pinnedFlag = scriptFlagPorts(devCommand.value, devCommand.source)[0];
+  const flagWarnings =
+    pinnedFlag && !portOverride.includes("flag")
+      ? [
+          `dev script pins port ${pinnedFlag.port} with a flag and portless only sets PORT for ${framework?.name ?? "this stack"}; the flag wins, so remove it or read PORT`,
+        ]
+      : [];
 
   return {
     name,
@@ -110,8 +130,9 @@ export const detectStack = (root: string, relativeDirectory: string): Stack | nu
     devCommand,
     ports,
     effectivePort: effectivePort(ports),
-    portOverride: framework?.override ?? fallbackOverride,
-    warnings: entry?.warnings ?? [],
+    portOverride,
+    portEnv: entry?.portEnv ?? null,
+    warnings: [...(entry?.warnings ?? []), ...flagWarnings],
   };
 };
 
@@ -132,6 +153,7 @@ export const procfileStack = (entry: { name: string; command: string; source: st
     ports,
     effectivePort: effectivePort(ports),
     portOverride: /\$PORT\b|\$\{PORT\}/.test(entry.command) ? "env:PORT" : "manual",
+    portEnv: null,
     warnings: [],
   };
 };

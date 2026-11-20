@@ -1,0 +1,7 @@
+{
+  "name": "@harbor/core",
+  "private": true,
+  "type": "module",
+  "scripts": { "dev": "node server.mjs" },
+  "dependencies": { "express": "5.1.0" }
+}

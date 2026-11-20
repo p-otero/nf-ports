@@ -65,6 +65,9 @@ describe("orbit-turbo fixture (pnpm, turbo, next, fastify, cypress)", () => {
     expect(site.framework).toBe("next");
     expect(site.effectivePort).toBe(3100);
     expect(site.portOverride).toBe("env:PORT");
+    expect(site.warnings).toEqual([
+      "dev script pins port 3100 with a flag and portless only sets PORT for next; the flag wins, so remove it or read PORT",
+    ]);
   });
 
   test("warns when a back never reads PORT", () => {
@@ -80,6 +83,24 @@ describe("orbit-turbo fixture (pnpm, turbo, next, fastify, cypress)", () => {
     expect(e2e?.configFile).toBe("apps/site/cypress.config.ts");
     expect(e2e?.baseUrl?.value).toBe('"http://localhost:3100"');
     expect(e2e?.override).toBe("env CYPRESS_BASE_URL (native Cypress override)");
+  });
+});
+
+describe("harbor-split fixture (back on its own port variable, literal playwright baseURL)", () => {
+  const root = fixture("harbor-split");
+
+  test("finds the port variable a back reads instead of PORT", () => {
+    const core = stackNamed(root, "@harbor/core");
+    expect(core.role).toBe("back");
+    expect(core.portEnv).toBe("CORE_PORT");
+    expect(core.portOverride).toBe("env:other");
+    expect(core.warnings).toEqual(["server entry reads CORE_PORT, not PORT; nfp up picks the port and sets CORE_PORT"]);
+  });
+
+  test("reports a literal baseURL and an unconditional webServer", () => {
+    const [e2e] = detect(root).e2e;
+    expect(e2e?.baseUrlEnv).toBeNull();
+    expect(e2e?.webServer).toBe(true);
   });
 });
 

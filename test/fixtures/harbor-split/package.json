@@ -1,0 +1,9 @@
+{
+  "name": "harbor",
+  "private": true,
+  "type": "module",
+  "workspaces": ["apps/*", "services/*"],
+  "devDependencies": {
+    "@playwright/test": "1.56.1"
+  }
+}

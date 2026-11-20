@@ -35,7 +35,7 @@ describe("t3ScriptsFor", () => {
       ["Ports setup", "nfp setup --quiet", "configure"],
       ["Dev (portless)", "nfp up", "play"],
       ["E2E", "nfp e2e", "test"],
-      ["E2E (Docker)", "nfp e2e --docker", "test"],
+      ["E2E (hidden)", "nfp e2e --hidden", "test"],
     ]);
     expect(scripts[0]?.runOnWorktreeCreate).toBe(true);
     expect(scripts[1]).not.toHaveProperty("previewUrl");
@@ -146,7 +146,7 @@ describe("nfp t3 scripts", () => {
       "bunx nfp setup --quiet",
       "bunx nfp up",
       "bunx nfp e2e",
-      "bunx nfp e2e --docker",
+      "bunx nfp e2e --hidden",
     ]);
   });
 
@@ -158,13 +158,13 @@ describe("nfp t3 scripts", () => {
     );
     const result = run(["t3", "scripts", root, "--json"]);
     expect(result.code).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({ status: "updated", added: ["Ports setup", "Dev (portless)", "E2E", "E2E (Docker)"] });
+    expect(JSON.parse(result.stdout)).toMatchObject({ status: "updated", added: ["Ports setup", "Dev (portless)", "E2E", "E2E (hidden)"] });
     expect(readT3(root).scripts.map((script) => script["name"])).toEqual([
       "Board",
       "Ports setup",
       "Dev (portless)",
       "E2E",
-      "E2E (Docker)",
+      "E2E (hidden)",
     ]);
   });
 

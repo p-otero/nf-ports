@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { parseUp } from "../src/cli.ts";
 import { detect } from "../src/detect/index.ts";
-import { formatBanner, planUp, preloadUrl, worktreePrefix } from "../src/up/plan.ts";
+import { loadConfig, parseConfig } from "../src/config.ts";
+import { findLaunch, formatBanner, planUp, portPlaceholder, preloadUrl, worktreePrefix } from "../src/up/plan.ts";
+import { withPort } from "../src/up/run.ts";
 
 const fixture = (name: string): string => join(import.meta.dir, "fixtures", name);
 
@@ -78,5 +80,55 @@ describe("parseUp", () => {
 
   test("rejects unknown flags", () => {
     expect(parseUp(["--detach"])).toMatchObject({ code: 2 });
+  });
+});
+
+describe("planUp on harbor-split with nfp.json", () => {
+  const root = fixture("harbor-split");
+  const plan = planUp(detect(root), "feat/dock", fakeUrl, undefined, loadConfig(root));
+  const [client, core] = plan.launches;
+
+  test("wires the front to the back and the back to the front", () => {
+    expect(plan.launches.map((launch) => launch.name)).toEqual(["harbor", "core.harbor"]);
+    expect(client?.env["VITE_CORE_API_URL"]).toBe("https://feat-dock.core.harbor.localhost");
+    expect(core?.env["CORS_ORIGIN"]).toBe("https://feat-dock.harbor.localhost");
+    expect(core?.env).not.toHaveProperty("DATABASE_URL");
+  });
+
+  test("picks the port for a back that reads its own variable", () => {
+    expect(client?.appPort).toBe(false);
+    expect(core?.appPort).toBe(true);
+    expect(core?.env["CORE_PORT"]).toBe(portPlaceholder);
+    expect(withPort(core?.env ?? {}, 4321)["CORE_PORT"]).toBe("4321");
+  });
+
+  test("expands the nfp.json env templates", () => {
+    expect(core?.env["AUTH_CALLBACK_URL"]).toBe("https://feat-dock.harbor.localhost/auth/callback");
+    expect(core?.env["RELEASE_LABEL"]).toBe("feat/dock");
+  });
+
+  test("lets nfp.json override names and roles", () => {
+    const config = parseConfig(JSON.stringify({ apps: { "services/core/": { name: "api.harbor", role: "front" } } }));
+    const custom = planUp(detect(root), "feat/dock", fakeUrl, undefined, config);
+    expect(custom.launches.map((launch) => [launch.name, launch.role])).toEqual([
+      ["harbor", "front"],
+      ["api.harbor", "front"],
+    ]);
+    expect(custom.launches[1]?.env).not.toHaveProperty("CORS_ORIGIN");
+  });
+
+  test("finds launches by name, package, directory or role", () => {
+    expect(findLaunch(plan, undefined)?.name).toBe("harbor");
+    expect(findLaunch(plan, "back")?.name).toBe("core.harbor");
+    expect(findLaunch(plan, "core")?.name).toBe("core.harbor");
+    expect(findLaunch(plan, "@harbor/core")?.name).toBe("core.harbor");
+    expect(findLaunch(plan, "services/core")?.name).toBe("core.harbor");
+    expect(findLaunch(plan, "nope")).toBeUndefined();
+  });
+
+  test("passes stack warnings through", () => {
+    expect(plan.warnings).toEqual([
+      "core.harbor: server entry reads CORE_PORT, not PORT; nfp up picks the port and sets CORE_PORT",
+    ]);
   });
 });
