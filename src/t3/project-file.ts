@@ -29,6 +29,7 @@ export type MergeOutcome = {
   readonly added: readonly string[];
   readonly updated: readonly string[];
   readonly unchanged: readonly string[];
+  readonly removed: readonly string[];
 };
 
 const sameJson = (left: unknown, right: unknown): boolean => JSON.stringify(left) === JSON.stringify(right);
@@ -54,9 +55,21 @@ const existingScripts = (file: Record<string, unknown>): Record<string, unknown>
 const scriptName = (script: Record<string, unknown>): string =>
   typeof script["name"] === "string" ? script["name"].trim() : "";
 
-export const mergeScripts = (file: Record<string, unknown>, scripts: readonly T3Script[]): MergeOutcome => {
+const ownedByNfp = (script: Record<string, unknown>): boolean =>
+  typeof script["command"] === "string" && /(^|\s)nfp\s/.test(script["command"]);
+
+export const mergeScripts = (
+  file: Record<string, unknown>,
+  scripts: readonly T3Script[],
+  retired: readonly string[] = [],
+): MergeOutcome => {
   scripts.forEach(validateScript);
-  const current = existingScripts(file);
+  const removed: string[] = [];
+  const current = existingScripts(file).filter((script) => {
+    const drop = retired.includes(scriptName(script)) && ownedByNfp(script);
+    if (drop) removed.push(scriptName(script));
+    return !drop;
+  });
   const wanted = new Map(scripts.map((script) => [script.name.trim(), script]));
   const added: string[] = [];
   const updated: string[] = [];
@@ -79,7 +92,7 @@ export const mergeScripts = (file: Record<string, unknown>, scripts: readonly T3
   }
 
   const schema = typeof file["$schema"] === "string" ? file["$schema"] : t3SchemaUrl;
-  return { file: { $schema: schema, ...file, scripts: merged }, added, updated, unchanged };
+  return { file: { $schema: schema, ...file, scripts: merged }, added, updated, unchanged, removed };
 };
 
 export type WriteOutcome = MergeOutcome & {
@@ -103,11 +116,11 @@ const readProjectFile = (path: string): Record<string, unknown> | null => {
 export const writeT3Scripts = (
   root: string,
   scripts: readonly T3Script[],
-  options: { readonly dryRun: boolean },
+  options: { readonly dryRun: boolean; readonly retired?: readonly string[] },
 ): WriteOutcome => {
   const path = join(root, t3FileName);
   const existing = readProjectFile(path);
-  const outcome = mergeScripts(existing ?? {}, scripts);
+  const outcome = mergeScripts(existing ?? {}, scripts, options.retired);
   const content = `${JSON.stringify(outcome.file, null, 2)}\n`;
   const status = existing === null ? "created" : sameJson(existing, outcome.file) ? "unchanged" : "updated";
   if (!options.dryRun && status !== "unchanged") writeFileSync(path, content);

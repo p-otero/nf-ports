@@ -3,8 +3,9 @@ import type { DetectReport, Stack } from "../detect/types.ts";
 import { isRecord, parseEnv, readJson, readText } from "../detect/files.ts";
 import { envFiles } from "../detect/ports.ts";
 import { type AppConfig, emptyConfig, expandTemplate, type NfpConfig, normalizeDirectory } from "../config.ts";
+import { packageFileUrl } from "../package.ts";
 
-export const preloadUrl = new URL("../../preload/localhost-dns.mjs", import.meta.url).href;
+export const preloadUrl = packageFileUrl("preload/localhost-dns.mjs");
 
 export const portPlaceholder = "{port}";
 

@@ -1,23 +1,31 @@
-#!/usr/bin/env bun
 import { ConfigError, loadConfig } from "./config.ts";
 import { detect } from "./detect/index.ts";
 import { type E2eOptions, type HiddenRequest, planE2e } from "./e2e/plan.ts";
 import { runE2e } from "./e2e/run.ts";
 import { formatReport } from "./format.ts";
 import { findRepoRoot } from "./git.ts";
+import { initProject, isCi, syncProject } from "./install.ts";
+import { packageVersion } from "./package.ts";
 import { runSetup } from "./setup.ts";
 import { T3FileError, writeT3Scripts } from "./t3/project-file.ts";
-import { t3ScriptsFor } from "./t3/scripts.ts";
+import { defaultBin, retiredScripts, t3ScriptsFor } from "./t3/scripts.ts";
 import { findLaunch, formatBanner } from "./up/plan.ts";
 import { planFor, runUp } from "./up/run.ts";
 
 const usage = `nfp - per-worktree ports and names through portless
 
 Usage:
+  nfp init
+      Add "postinstall": "nfp sync" to the project's package.json and create nfp.json
+  nfp sync [--quiet]
+      Run on every install: merge the nfp scripts into t3.json and say if nfp setup is still needed.
+      Silent when nothing changed, never interactive, never fails the install, skipped when CI is set.
+      --quiet only prints warnings and the setup hint
   nfp detect [dir] [--json]
       Print the stacks, dev commands, ports and e2e config found
   nfp t3 scripts [dir] [--dry-run] [--json] [--bin <cmd>] [--preview-url <url>]
-      Write or merge the nfp scripts into t3.json at the repository root, by script name
+      Write or merge the nfp scripts into t3.json at the repository root, by script name.
+      --bin defaults to the package manager's local runner (npx --no nfp, pnpm exec nfp, bunx nfp)
   nfp up [dir] [--print]
       Start every stack through portless under the branch name; the first line is the front URL.
       --print resolves and prints the launch plan as JSON without starting anything
@@ -29,7 +37,7 @@ Usage:
       or with --hidden=desktop, the run happens on a hidden Windows desktop
   nfp setup [--quiet]
       Once per machine: start the portless proxy and trust its CA (no time limit on the dialog)
-  nfp help
+  nfp help | --version
 
 Optional nfp.json at the repository root:
   { "apps": { "<dir>": { "name", "role", "portEnv", "env": { "KEY": "{url:<app>} | {branch}" } } },
@@ -89,14 +97,15 @@ const runT3Scripts = (args: readonly string[]): CliResult => {
   const start = parsed.positional[0] ?? process.cwd();
   const root = findRepoRoot(start);
   if (!root) return { code: 1, stdout: "", stderr: `no git repository at or above ${start}` };
-  const scripts = t3ScriptsFor(detect(root), {
-    bin: parsed.values.get("--bin") ?? "nfp",
+  const report = detect(root);
+  const scripts = t3ScriptsFor(report, {
+    bin: parsed.values.get("--bin") ?? defaultBin(report),
     previewUrl: parsed.values.get("--preview-url") ?? null,
   });
   if (scripts.length === 0) return { code: 1, stdout: "", stderr: `no dev stacks detected in ${root}` };
   try {
     const dryRun = parsed.flags.has("--dry-run");
-    const outcome = writeT3Scripts(root, scripts, { dryRun });
+    const outcome = writeT3Scripts(root, scripts, { dryRun, retired: retiredScripts });
     if (parsed.flags.has("--json")) {
       const { file: _file, content: _content, ...summary } = outcome;
       return { code: 0, stdout: JSON.stringify({ ...summary, dryRun }, null, 2), stderr: "" };
@@ -106,6 +115,7 @@ const runT3Scripts = (args: readonly string[]): CliResult => {
       `added: ${outcome.added.join(", ") || "none"}`,
       `updated: ${outcome.updated.join(", ") || "none"}`,
       `unchanged: ${outcome.unchanged.join(", ") || "none"}`,
+      ...(outcome.removed.length > 0 ? [`removed: ${outcome.removed.join(", ")}`] : []),
     ];
     return { code: 0, stdout: dryRun ? `${summary.join("\n")}\n\n${outcome.content.trimEnd()}` : summary.join("\n"), stderr: "" };
   } catch (error) {
@@ -114,11 +124,38 @@ const runT3Scripts = (args: readonly string[]): CliResult => {
   }
 };
 
+export const runSync = (args: readonly string[], env: NodeJS.ProcessEnv = process.env): CliResult => {
+  const parsed = parseArgs(args, ["--quiet"], []);
+  if (typeof parsed === "string" || parsed.positional.length > 0) return usageError("sync takes only --quiet");
+  if (isCi(env)) return { code: 0, stdout: "", stderr: "" };
+  const root = findRepoRoot(env["INIT_CWD"] ?? process.cwd());
+  if (!root) return { code: 0, stdout: "", stderr: "" };
+  const result = syncProject(root);
+  const quiet = parsed.flags.has("--quiet");
+  const lines = result.lines.filter(
+    (line) => !line.startsWith("t3.json unchanged") && !(quiet && line.startsWith("t3.json")),
+  );
+  return { code: result.code, stdout: lines.map((line) => `nfp: ${line}`).join("\n"), stderr: "" };
+};
+
+const runInit = (args: readonly string[]): CliResult => {
+  if (args.length > 0) return usageError("init takes no arguments");
+  const root = findRepoRoot(process.cwd());
+  if (!root) return { code: 1, stdout: "", stderr: `no git repository at or above ${process.cwd()}` };
+  const { changed } = initProject(root);
+  const synced = syncProject(root);
+  const lines = [changed.length > 0 ? `updated ${changed.join(", ")}` : "already set up", ...synced.lines];
+  return { code: 0, stdout: lines.map((line) => `nfp: ${line}`).join("\n"), stderr: "" };
+};
+
 export const run = (argv: readonly string[]): CliResult => {
   const [command, ...rest] = argv;
   if (command === undefined || command === "help" || command === "--help" || command === "-h") {
     return { code: 0, stdout: usage, stderr: "" };
   }
+  if (command === "--version" || command === "-v") return { code: 0, stdout: packageVersion(), stderr: "" };
+  if (command === "sync") return runSync(rest);
+  if (command === "init") return runInit(rest);
   if (command === "detect") return runDetect(rest);
   if (command === "t3") {
     const [subcommand, ...args] = rest;
@@ -211,7 +248,7 @@ const dispatch = async (argv: readonly string[]): Promise<number> => {
   return emit(json({ banner: formatBanner(plan), ...plan }));
 };
 
-const main = async (argv: readonly string[]): Promise<number> => {
+export const main = async (argv: readonly string[]): Promise<number> => {
   try {
     return await dispatch(argv);
   } catch (error) {
@@ -219,7 +256,3 @@ const main = async (argv: readonly string[]): Promise<number> => {
     throw error;
   }
 };
-
-if (import.meta.main) {
-  process.exitCode = await main(process.argv.slice(2));
-}

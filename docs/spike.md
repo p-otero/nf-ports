@@ -486,6 +486,29 @@ per front (the first back wins unless `nfp.json` says otherwise), Compose servic
 Unit tests: `test/config.test.ts`, `test/e2e.test.ts`, new cases in `test/up.test.ts` and
 `test/detect.test.ts`, fixture `test/fixtures/harbor-split`.
 
+## 10. A4: npm package and install hook (2026-11-20)
+
+- `bun run build` bundles `src/bin.ts` to `dist/bin.js` for Node (`--target node`); Node does not
+  strip types under `node_modules`. Package files are located from the nf-ports `package.json`,
+  so `src/` and `dist/` resolve `preload/` and `scripts/` the same way.
+- portless 0.18.1 is a dependency. nfp finds it by walking up `node_modules` (portless does not
+  export `package.json`) and runs `node <portless>/dist/cli.js`; it falls back to `portless` on
+  PATH.
+- Dependency `postinstall` scripts are not reliable (Bun needs `trustedDependencies`, pnpm 10
+  needs approval), and installs must never prompt. `nfp init` therefore adds
+  `"postinstall": "nfp sync"` to the project's own `package.json`. `nfp sync` merges `t3.json`
+  (with the package manager's local runner, e.g. `npx --no nfp up`), retires nfp's old
+  "Ports setup"/"E2E (Docker)" scripts, checks the CA fingerprint in the user Root store
+  (~50 ms) and prints the `nfp setup` hint; it is silent when nothing changed and skipped in CI.
+
+| Check (packed `nf-ports-0.1.0.tgz`, fresh fixture copies with their own git) | Result |
+| --- | --- |
+| npm: `npm install -D <tgz>`, `npx nfp init` | postinstall added, `nfp.json` and `t3.json` created |
+| npm: `npm install`, `CI=1 npm install`, first `npm install` in a new worktree | `nfp sync` ran each time; skipped under CI |
+| npm worktree: `npx nfp up` + `npx nfp e2e` | Branch URLs; portless ran from the worktree's `node_modules`; 1 passed (1.3 s) |
+| Bun: `bun add -d <tgz>`, `bunx nfp init`, `bun install`, worktree `bun install` | Root postinstall ran without `trustedDependencies`; scripts use `bunx nfp` |
+| Bun worktree: `bunx nfp url`, `e2e --print` | Branch URLs; preload resolved inside Bun's isolated `node_modules/.bun` |
+
 ## Cleanup
 
 Everything started by the spike was stopped (stacks, bridges, containers, proxy). To remove

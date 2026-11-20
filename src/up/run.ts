@@ -2,22 +2,29 @@ import { type ChildProcess, execFileSync, spawn, spawnSync } from "node:child_pr
 import { createServer } from "node:net";
 import { StringDecoder } from "node:string_decoder";
 import { loadConfig } from "../config.ts";
+import { portlessCommand } from "../package.ts";
 import { detect } from "../detect/index.ts";
 import { formatBanner, type Launch, planUp, portPlaceholder, type UpPlan } from "./plan.ts";
 
 const isWindows = process.platform === "win32";
 
-export const portless = (args: readonly string[], env: Readonly<Record<string, string>> = {}) =>
-  spawnSync("portless", [...args], {
+export const portless = (args: readonly string[], env: Readonly<Record<string, string>> = {}) => {
+  const command = portlessCommand(args);
+  return spawnSync(command.program, [...command.args], {
     encoding: "utf8",
     env: { ...process.env, ...env },
-    shell: isWindows,
+    shell: command.shell,
     windowsHide: true,
   });
+};
 
 export const currentBranch = (root: string): string => {
   try {
-    return execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+    return execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
   } catch {
     return "";
   }
@@ -88,11 +95,11 @@ const stopTree = (child: ChildProcess): void => {
 };
 
 const launch = (entry: Launch, port: number | null): ChildProcess => {
-  const args = ["run", "--name", entry.name, ...(port === null ? [] : ["--app-port", String(port)])];
-  const child = spawn("portless", args, {
+  const command = portlessCommand(["run", "--name", entry.name, ...(port === null ? [] : ["--app-port", String(port)])]);
+  const child = spawn(command.program, [...command.args], {
     cwd: entry.directory,
     env: { ...process.env, ...(port === null ? entry.env : withPort(entry.env, port)) },
-    shell: isWindows,
+    shell: command.shell,
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });

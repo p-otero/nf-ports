@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { portlessCommand } from "./package.ts";
 import { portless } from "./up/run.ts";
 
 type Finding = { readonly status: string; readonly message: string };
@@ -25,9 +26,10 @@ export const caTrusted = (doctor: Doctor): boolean =>
 const trustCa = (stateDir: string): boolean => {
   const ca = join(stateDir, "ca.pem");
   if (!existsSync(ca)) return false;
+  const trust = portlessCommand(["trust"]);
   const result = isWindows
     ? spawnSync("certutil", ["-addstore", "-user", "Root", ca], { stdio: "inherit" })
-    : spawnSync("portless", ["trust"], { stdio: "inherit" });
+    : spawnSync(trust.program, [...trust.args], { stdio: "inherit", shell: trust.shell });
   return result.status === 0;
 };
 

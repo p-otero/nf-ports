@@ -1,0 +1,42 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "nfp.json",
+  "description": "Optional nf-ports settings for what detection cannot guess.",
+  "type": "object",
+  "additionalProperties": false,
+  "definitions": {
+    "envName": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+    "env": {
+      "type": "object",
+      "description": "Extra environment. Templates: {url:<app name, package, directory, front or back>}, {branch}.",
+      "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+      "additionalProperties": { "type": "string" }
+    }
+  },
+  "properties": {
+    "$schema": { "type": "string" },
+    "apps": {
+      "type": "object",
+      "description": "Per app, keyed by its directory relative to the repository root.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "description": "portless name, e.g. api.myapp" },
+          "role": { "enum": ["front", "back", "unknown"] },
+          "portEnv": { "$ref": "#/definitions/envName", "description": "Variable the server listens on instead of PORT; nfp picks the port." },
+          "env": { "$ref": "#/definitions/env" }
+        }
+      }
+    },
+    "e2e": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "config": { "type": "string", "minLength": 1, "description": "Playwright or Cypress config to use, relative to the repository root." },
+        "hiddenEnv": { "$ref": "#/definitions/envName", "description": "Variable the app reads to keep its window off screen; nfp e2e --hidden sets it to 1." },
+        "env": { "$ref": "#/definitions/env" }
+      }
+    }
+  }
+}

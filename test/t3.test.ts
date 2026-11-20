@@ -29,20 +29,19 @@ afterEach(() => {
 });
 
 describe("t3ScriptsFor", () => {
-  test("derives setup, dev and both e2e scripts for the lumen fixture", () => {
+  test("derives dev and both e2e scripts for the lumen fixture", () => {
     const scripts = t3ScriptsFor(detect(fixture("lumen-notes")), { bin: "nfp", previewUrl: null });
     expect(scripts.map((script) => [script.name, script.command, script.icon])).toEqual([
-      ["Ports setup", "nfp setup --quiet", "configure"],
       ["Dev (portless)", "nfp up", "play"],
       ["E2E", "nfp e2e", "test"],
       ["E2E (hidden)", "nfp e2e --hidden", "test"],
     ]);
-    expect(scripts[0]?.runOnWorktreeCreate).toBe(true);
-    expect(scripts[1]).not.toHaveProperty("previewUrl");
+    expect(scripts[0]?.runOnWorktreeCreate).toBe(false);
+    expect(scripts[0]).not.toHaveProperty("previewUrl");
   });
 
   test("adds previewUrl and autoOpenPreview only when asked", () => {
-    const [, dev] = t3ScriptsFor(detect(fixture("lumen-notes")), {
+    const [dev] = t3ScriptsFor(detect(fixture("lumen-notes")), {
       bin: "bunx nfp",
       previewUrl: "https://lumen.localhost",
     });
@@ -53,7 +52,7 @@ describe("t3ScriptsFor", () => {
     const names = t3ScriptsFor(detect(fixture("kettle-procfile")), { bin: "nfp", previewUrl: null }).map(
       (script) => script.name,
     );
-    expect(names).toEqual(["Ports setup", "Dev (portless)"]);
+    expect(names).toEqual(["Dev (portless)"]);
   });
 });
 
@@ -143,7 +142,6 @@ describe("nfp t3 scripts", () => {
     const file = readT3(root);
     expect(file.$schema).toBe(t3SchemaUrl);
     expect(file.scripts.map((script) => script["command"])).toEqual([
-      "bunx nfp setup --quiet",
       "bunx nfp up",
       "bunx nfp e2e",
       "bunx nfp e2e --hidden",
@@ -158,13 +156,33 @@ describe("nfp t3 scripts", () => {
     );
     const result = run(["t3", "scripts", root, "--json"]);
     expect(result.code).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({ status: "updated", added: ["Ports setup", "Dev (portless)", "E2E", "E2E (hidden)"] });
+    expect(JSON.parse(result.stdout)).toMatchObject({ status: "updated", added: ["Dev (portless)", "E2E", "E2E (hidden)"] });
     expect(readT3(root).scripts.map((script) => script["name"])).toEqual([
       "Board",
-      "Ports setup",
       "Dev (portless)",
       "E2E",
       "E2E (hidden)",
+    ]);
+  });
+
+  test("defaults to the local runner and retires old nfp scripts it owns", () => {
+    const root = repoCopy("lumen-notes");
+    writeFileSync(
+      join(root, "t3.json"),
+      JSON.stringify({
+        scripts: [
+          { name: "Ports setup", command: "bunx nfp setup --quiet" },
+          { name: "E2E (Docker)", command: "my-docker-e2e" },
+        ],
+      }),
+    );
+    const result = run(["t3", "scripts", root, "--json"]);
+    expect(JSON.parse(result.stdout)).toMatchObject({ removed: ["Ports setup"] });
+    expect(readT3(root).scripts.map((script) => [script["name"], script["command"]])).toEqual([
+      ["E2E (Docker)", "my-docker-e2e"],
+      ["Dev (portless)", "npx --no nfp up"],
+      ["E2E", "npx --no nfp e2e"],
+      ["E2E (hidden)", "npx --no nfp e2e --hidden"],
     ]);
   });
 

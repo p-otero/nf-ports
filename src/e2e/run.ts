@@ -2,12 +2,12 @@ import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { closeSync, openSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { packageFile } from "../package.ts";
 import { activeRouteUrls } from "../up/run.ts";
 import type { E2ePlan } from "./plan.ts";
 
 const isWindows = process.platform === "win32";
-const hiddenDesktopScript = fileURLToPath(new URL("../../scripts/hidden-desktop.ps1", import.meta.url));
+const hiddenDesktopScript = packageFile("scripts/hidden-desktop.ps1");
 
 const quoteForCmd = (argument: string): string =>
   /^[\w./:=@+-]+$/.test(argument) ? argument : `"${argument.replaceAll('"', '""')}"`;
