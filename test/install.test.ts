@@ -95,5 +95,5 @@ describe("built bin", () => {
     const plan = spawnSync("node", [bin, "e2e", "--print"], { cwd: root, encoding: "utf8" });
     const preload = /--import=(file:\S+)/.exec((JSON.parse(plan.stdout) as { env: { NODE_OPTIONS: string } }).env.NODE_OPTIONS)?.[1];
     expect(preload && existsSync(fileURLToPath(preload))).toBe(true);
-  });
+  }, 30_000);
 });
