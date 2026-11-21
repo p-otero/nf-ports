@@ -9,9 +9,7 @@ export const readText = (path: string): string | null => {
   }
 };
 
-export const readJson = (path: string): unknown => {
-  const text = readText(path);
-  if (text === null) return null;
+export const parseJson = (text: string): unknown => {
   try {
     return JSON.parse(text) as unknown;
   } catch {
@@ -19,8 +17,22 @@ export const readJson = (path: string): unknown => {
   }
 };
 
+export const readJson = (path: string): unknown => {
+  const text = readText(path);
+  return text === null ? null : parseJson(text);
+};
+
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+export const stringField = (value: unknown, key: string): string | undefined => {
+  if (!isRecord(value)) return undefined;
+  const field = value[key];
+  return typeof field === "string" ? field : undefined;
+};
+
+export const isPresent = (value: string | null | undefined): value is string =>
+  value !== undefined && value !== null && value !== "";
 
 export const stringRecord = (value: unknown): Record<string, string> => {
   if (!isRecord(value)) return {};
@@ -55,7 +67,7 @@ export const parseEnv = (text: string): Record<string, string> => {
   const entries: Record<string, string> = {};
   for (const rawLine of text.split(/\r?\n/)) {
     const match = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/.exec(rawLine);
-    if (!match?.[1]) continue;
+    if (!isPresent(match?.[1])) continue;
     entries[match[1]] = (match[2] ?? "").replace(/^(['"])(.*)\1$/, "$2");
   }
   return entries;

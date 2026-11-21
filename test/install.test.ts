@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runSync } from "../src/cli.ts";
 import { initProject, isCi, schemaPath, syncProject } from "../src/install.ts";
+import { stringField } from "../src/detect/files.ts";
+import { parseRecord } from "./json.ts";
 
 const fixture = (name: string): string => join(import.meta.dir, "fixtures", name);
 const temporary: string[] = [];
@@ -26,13 +28,13 @@ describe("initProject", () => {
   test("adds the postinstall hook once, keeps an existing one and the indent", () => {
     const root = repoCopy("harbor-split");
     const manifestPath = join(root, "package.json");
-    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as Record<string, unknown>;
+    const manifest = parseRecord(readFileSync(manifestPath, "utf8"));
     writeFileSync(manifestPath, JSON.stringify({ ...manifest, scripts: { postinstall: "patch-package" } }, null, 4));
     rmSync(join(root, "nfp.json"));
     expect(initProject(root).changed).toEqual(["package.json scripts.postinstall", "nfp.json"]);
     const text = readFileSync(manifestPath, "utf8");
     expect(text).toContain('\n    "scripts"');
-    expect(JSON.parse(text).scripts.postinstall).toBe("patch-package && nfp sync");
+    expect(stringField(parseRecord(text).scripts, "postinstall")).toBe("patch-package && nfp sync");
     expect(JSON.parse(readFileSync(join(root, "nfp.json"), "utf8"))).toEqual({ $schema: schemaPath });
     expect(initProject(root).changed).toEqual([]);
   });
@@ -93,7 +95,8 @@ describe("built bin", () => {
     expect(url.stderr).toBe("");
     expect(url.stdout.trim()).toBe("https://api.lumen.localhost");
     const plan = spawnSync("node", [bin, "e2e", "--print"], { cwd: root, encoding: "utf8" });
-    const preload = /--import=(file:\S+)/.exec((JSON.parse(plan.stdout) as { env: { NODE_OPTIONS: string } }).env.NODE_OPTIONS)?.[1];
-    expect(preload && existsSync(fileURLToPath(preload))).toBe(true);
+    const nodeOptions = stringField(parseRecord(plan.stdout).env, "NODE_OPTIONS") ?? "";
+    const preload = /--import=(file:\S+)/.exec(nodeOptions)?.[1];
+    expect(preload !== undefined && existsSync(fileURLToPath(preload))).toBe(true);
   }, 30_000);
 });

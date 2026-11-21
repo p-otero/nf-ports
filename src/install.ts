@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { ConfigError, loadConfig } from "./config.ts";
 import { detect } from "./detect/index.ts";
+import { isPresent, isRecord, stringField } from "./detect/files.ts";
 import { T3FileError, writeT3Scripts } from "./t3/project-file.ts";
 import { defaultBin, retiredScripts, t3ScriptsFor } from "./t3/scripts.ts";
 
@@ -12,13 +13,13 @@ export const syncCommand = "nfp sync";
 export const schemaPath = "./node_modules/nf-ports/nfp.schema.json";
 
 export const isCi = (env: NodeJS.ProcessEnv = process.env): boolean => {
-  const value = env["CI"];
+  const value = env.CI;
   return value !== undefined && value !== "" && value !== "0" && value.toLowerCase() !== "false";
 };
 
 export type PortlessState = "ready" | "no-ca" | "untrusted";
 
-const stateDir = (): string => process.env["PORTLESS_STATE_DIR"] ?? join(homedir(), ".portless");
+const stateDir = (): string => process.env.PORTLESS_STATE_DIR ?? join(homedir(), ".portless");
 
 export const portlessState = (): PortlessState => {
   const ca = join(stateDir(), "ca.pem");
@@ -60,8 +61,6 @@ export const syncProject = (root: string, readiness: () => PortlessState = portl
   return { code: 0, lines };
 };
 
-type Manifest = { scripts?: Record<string, string>; [key: string]: unknown };
-
 const detectIndent = (text: string): string => /^[ \t]+(?=")/m.exec(text)?.[0] ?? "  ";
 
 export type InitResult = { readonly changed: readonly string[] };
@@ -70,11 +69,12 @@ export const initProject = (root: string): InitResult => {
   const changed: string[] = [];
   const manifestPath = join(root, "package.json");
   const text = readFileSync(manifestPath, "utf8");
-  const manifest = JSON.parse(text) as Manifest;
-  const scripts = manifest.scripts ?? {};
-  const postinstall = scripts["postinstall"];
-  if (!postinstall?.includes(syncCommand)) {
-    manifest.scripts = { ...scripts, postinstall: postinstall ? `${postinstall} && ${syncCommand}` : syncCommand };
+  const manifest = JSON.parse(text) as unknown;
+  if (!isRecord(manifest)) throw new ConfigError(`${manifestPath} must contain an object`);
+  const scripts = isRecord(manifest.scripts) ? manifest.scripts : {};
+  const postinstall = stringField(scripts, "postinstall");
+  if (postinstall?.includes(syncCommand) !== true) {
+    manifest.scripts = { ...scripts, postinstall: isPresent(postinstall) ? `${postinstall} && ${syncCommand}` : syncCommand };
     writeFileSync(manifestPath, `${JSON.stringify(manifest, null, detectIndent(text))}\n`);
     changed.push("package.json scripts.postinstall");
   }

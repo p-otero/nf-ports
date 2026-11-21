@@ -40,7 +40,7 @@ describe("planE2e on lumen-notes (baseURL from env, conditional webServer)", () 
     const hidden = planFor("lumen-notes", { hidden: "auto" });
     expect(hidden.hidden).toBe("desktop");
     expect(hidden.desktop).toBe("nfp-e2e-feat-alpha-search");
-    expect(hidden.env["NFP_E2E_HIDDEN"]).toBe("1");
+    expect(hidden.env.NFP_E2E_HIDDEN).toBe("1");
   });
 
   test("passes --headed and --ui to playwright", () => {
@@ -62,9 +62,9 @@ describe("planE2e on harbor-split (literal baseURL, unconditional webServer, nfp
   test("uses the app's hidden variable and expands e2e.env", () => {
     expect(plan.hidden).toBe("env");
     expect(plan.desktop).toBeNull();
-    expect(plan.env["HARBOR_E2E_HIDDEN_WINDOW"]).toBe("1");
-    expect(plan.env["NFP_E2E_HIDDEN"]).toBe("1");
-    expect(plan.env["HARBOR_API_URL"]).toBe("https://feat-dock.core.harbor.localhost");
+    expect(plan.env.HARBOR_E2E_HIDDEN_WINDOW).toBe("1");
+    expect(plan.env.NFP_E2E_HIDDEN).toBe("1");
+    expect(plan.env.HARBOR_API_URL).toBe("https://feat-dock.core.harbor.localhost");
   });
 
   test("--hidden=desktop forces the desktop even with an app variable", () => {
@@ -77,7 +77,7 @@ describe("planE2e on orbit-turbo (cypress)", () => {
     const plan = planFor("orbit-turbo", { ui: true });
     expect(plan.runner).toBe("cypress");
     expect(plan.cwd).toBe(join(fixture("orbit-turbo"), "apps/site"));
-    expect(plan.env["CYPRESS_BASE_URL"]).toBe("https://feat-alpha-search.orbit.localhost");
+    expect(plan.env.CYPRESS_BASE_URL).toBe("https://feat-alpha-search.orbit.localhost");
     expect(plan.command).toEqual(["pnpm", "exec", "cypress", "open"]);
   });
 });

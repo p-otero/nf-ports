@@ -35,9 +35,10 @@
     "portless": "0.18.1"
   },
   "devDependencies": {
-    "@p-otero/oxlint-rules": "github:p-otero/oxlint-rules#835a22baa11bdd98e5e2d5818de71dc84e66849d",
+    "@p-otero/oxlint-rules": "github:p-otero/oxlint-rules#b436d9d11d6216aa548fc58918052ac088b4d1f4",
     "@types/bun": "1.4.4",
     "oxlint": "1.92.0",
+    "oxlint-tsgolint": "7.0.2007",
     "typescript": "7.0.2"
   }
 }

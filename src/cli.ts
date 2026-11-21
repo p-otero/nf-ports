@@ -10,7 +10,7 @@ import { runSetup } from "./setup.ts";
 import { T3FileError, writeT3Scripts } from "./t3/project-file.ts";
 import { defaultBin, retiredScripts, t3ScriptsFor } from "./t3/scripts.ts";
 import { findLaunch, formatBanner } from "./up/plan.ts";
-import { planFor, runUp } from "./up/run.ts";
+import { planFor, runUp, UpError } from "./up/run.ts";
 
 const usage = `nfp - per-worktree ports and names through portless
 
@@ -96,7 +96,7 @@ const runT3Scripts = (args: readonly string[]): CliResult => {
   if (parsed.positional.length > 1) return usageError("t3 scripts takes at most one directory");
   const start = parsed.positional[0] ?? process.cwd();
   const root = findRepoRoot(start);
-  if (!root) return { code: 1, stdout: "", stderr: `no git repository at or above ${start}` };
+  if (root === null) return { code: 1, stdout: "", stderr: `no git repository at or above ${start}` };
   const report = detect(root);
   const scripts = t3ScriptsFor(report, {
     bin: parsed.values.get("--bin") ?? defaultBin(report),
@@ -128,8 +128,8 @@ export const runSync = (args: readonly string[], env: NodeJS.ProcessEnv = proces
   const parsed = parseArgs(args, ["--quiet"], []);
   if (typeof parsed === "string" || parsed.positional.length > 0) return usageError("sync takes only --quiet");
   if (isCi(env)) return { code: 0, stdout: "", stderr: "" };
-  const root = findRepoRoot(env["INIT_CWD"] ?? process.cwd());
-  if (!root) return { code: 0, stdout: "", stderr: "" };
+  const root = findRepoRoot(env.INIT_CWD ?? process.cwd());
+  if (root === null) return { code: 0, stdout: "", stderr: "" };
   const result = syncProject(root);
   const quiet = parsed.flags.has("--quiet");
   const lines = result.lines.filter(
@@ -141,7 +141,7 @@ export const runSync = (args: readonly string[], env: NodeJS.ProcessEnv = proces
 const runInit = (args: readonly string[]): CliResult => {
   if (args.length > 0) return usageError("init takes no arguments");
   const root = findRepoRoot(process.cwd());
-  if (!root) return { code: 1, stdout: "", stderr: `no git repository at or above ${process.cwd()}` };
+  if (root === null) return { code: 1, stdout: "", stderr: `no git repository at or above ${process.cwd()}` };
   const { changed } = initProject(root);
   const synced = syncProject(root);
   const lines = [changed.length > 0 ? `updated ${changed.join(", ")}` : "already set up", ...synced.lines];
@@ -192,7 +192,7 @@ export const parseE2e = (args: readonly string[]): E2eRequest | CliResult => {
   if (hidden && (headed || ui)) return usageError("--hidden cannot be combined with --headed or --ui");
   const start = parsed.positional[0] ?? process.cwd();
   const root = findRepoRoot(start);
-  if (!root) return { code: 1, stdout: "", stderr: `no git repository at or above ${start}` };
+  if (root === null) return { code: 1, stdout: "", stderr: `no git repository at or above ${start}` };
   return { root, print: parsed.flags.has("--print"), options: { headed, ui, hidden, args: passthrough } };
 };
 
@@ -202,7 +202,7 @@ export const parseUp = (args: readonly string[]): UpRequest | CliResult => {
   if (parsed.positional.length > 1) return usageError("up takes at most one directory");
   const start = parsed.positional[0] ?? process.cwd();
   const root = findRepoRoot(start);
-  if (!root) return { code: 1, stdout: "", stderr: `no git repository at or above ${start}` };
+  if (root === null) return { code: 1, stdout: "", stderr: `no git repository at or above ${start}` };
   return { root, print: parsed.flags.has("--print") };
 };
 
@@ -252,7 +252,7 @@ export const main = async (argv: readonly string[]): Promise<number> => {
   try {
     return await dispatch(argv);
   } catch (error) {
-    if (error instanceof ConfigError) return emit({ code: 1, stdout: "", stderr: error.message });
+    if (error instanceof ConfigError || error instanceof UpError) return emit({ code: 1, stdout: "", stderr: error.message });
     throw error;
   }
 };

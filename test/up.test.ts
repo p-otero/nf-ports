@@ -54,7 +54,7 @@ describe("planUp on lumen-notes", () => {
     const main = planUp(detect(fixture("lumen-notes")), "main", fakeUrl, undefined);
     expect(main.prefix).toBe("");
     expect(main.launches[0]?.url).toBe("https://lumen.localhost");
-    expect(main.launches[0]?.env["NODE_OPTIONS"]).toBe(`--import=${preloadUrl}`);
+    expect(main.launches[0]?.env.NODE_OPTIONS).toBe(`--import=${preloadUrl}`);
   });
 });
 
@@ -90,21 +90,21 @@ describe("planUp on harbor-split with nfp.json", () => {
 
   test("wires the front to the back and the back to the front", () => {
     expect(plan.launches.map((launch) => launch.name)).toEqual(["harbor", "core.harbor"]);
-    expect(client?.env["VITE_CORE_API_URL"]).toBe("https://feat-dock.core.harbor.localhost");
-    expect(core?.env["CORS_ORIGIN"]).toBe("https://feat-dock.harbor.localhost");
+    expect(client?.env.VITE_CORE_API_URL).toBe("https://feat-dock.core.harbor.localhost");
+    expect(core?.env.CORS_ORIGIN).toBe("https://feat-dock.harbor.localhost");
     expect(core?.env).not.toHaveProperty("DATABASE_URL");
   });
 
   test("picks the port for a back that reads its own variable", () => {
     expect(client?.appPort).toBe(false);
     expect(core?.appPort).toBe(true);
-    expect(core?.env["CORE_PORT"]).toBe(portPlaceholder);
-    expect(withPort(core?.env ?? {}, 4321)["CORE_PORT"]).toBe("4321");
+    expect(core?.env.CORE_PORT).toBe(portPlaceholder);
+    expect(withPort(core?.env ?? {}, 4321).CORE_PORT).toBe("4321");
   });
 
   test("expands the nfp.json env templates", () => {
-    expect(core?.env["AUTH_CALLBACK_URL"]).toBe("https://feat-dock.harbor.localhost/auth/callback");
-    expect(core?.env["RELEASE_LABEL"]).toBe("feat/dock");
+    expect(core?.env.AUTH_CALLBACK_URL).toBe("https://feat-dock.harbor.localhost/auth/callback");
+    expect(core?.env.RELEASE_LABEL).toBe("feat/dock");
   });
 
   test("lets nfp.json override names and roles", () => {

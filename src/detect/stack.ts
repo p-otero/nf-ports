@@ -1,6 +1,6 @@
 import { basename, join } from "node:path";
 import type { Evidence, PortFinding, PortOverride, Stack, StackRole } from "./types.ts";
-import { firstExisting, isRecord, readJson, readText, stringRecord } from "./files.ts";
+import { firstExisting, isPresent, isRecord, readJson, readText, stringRecord } from "./files.ts";
 import { type Framework, frameworks } from "./frameworks.ts";
 import { effectivePort, envPorts, scriptFlagPorts, sourcePorts } from "./ports.ts";
 
@@ -20,19 +20,19 @@ const readManifest = (directory: string): Manifest | null => {
   const manifest = readJson(join(directory, "package.json"));
   if (!isRecord(manifest)) return null;
   const dependencies = new Set([
-    ...Object.keys(stringRecord(manifest["dependencies"])),
-    ...Object.keys(stringRecord(manifest["devDependencies"])),
+    ...Object.keys(stringRecord(manifest.dependencies)),
+    ...Object.keys(stringRecord(manifest.devDependencies)),
   ]);
-  const name = typeof manifest["name"] === "string" ? manifest["name"] : null;
-  return { name, scripts: stringRecord(manifest["scripts"]), dependencies };
+  const name = typeof manifest.name === "string" ? manifest.name : null;
+  return { name, scripts: stringRecord(manifest.scripts), dependencies };
 };
 
 const nxServeTarget = (directory: string, projectName: string): Evidence | null => {
   const project = readJson(join(directory, "project.json"));
-  const targets = isRecord(project) && isRecord(project["targets"]) ? project["targets"] : null;
+  const targets = isRecord(project) && isRecord(project.targets) ? project.targets : null;
   if (!targets) return null;
   const target = ["serve", "dev"].find((name) => name in targets);
-  return target ? { value: `nx run ${projectName}:${target}`, source: "project.json" } : null;
+  return target === undefined ? null : { value: `nx run ${projectName}:${target}`, source: "project.json" };
 };
 
 const findFramework = (directory: string, manifest: Manifest): Framework | null =>
@@ -52,7 +52,7 @@ const entryWarnings = (entryText: string | null): string[] => {
   if (entryText === null) return [];
   const warnings: string[] = [];
   const portEnv = portEnvOf(entryText);
-  if (portEnv) {
+  if (portEnv !== null) {
     warnings.push(`server entry reads ${portEnv}, not PORT; nfp up picks the port and sets ${portEnv}`);
   } else if (!readsPort.test(entryText)) {
     warnings.push("server entry never reads PORT; portless cannot move it without a code change");
@@ -72,7 +72,7 @@ type EntryAnalysis = {
 
 const analyzeEntry = (directory: string, prefix: string, command: string): EntryAnalysis | null => {
   const entry = serverRunner.test(command) ? serverEntry.exec(command)?.[1] : undefined;
-  if (!entry) return null;
+  if (!isPresent(entry)) return null;
   const text = readText(join(directory, entry));
   return {
     ports: sourcePorts(join(directory, entry), `${prefix}${entry}`),
@@ -82,10 +82,16 @@ const analyzeEntry = (directory: string, prefix: string, command: string): Entry
   };
 };
 
+const frameworkDefaultPorts = (framework: Framework | null): PortFinding[] => {
+  if (framework === null) return [];
+  const { defaultPort, name } = framework;
+  return defaultPort === null ? [] : [{ port: defaultPort, source: `${name} default`, kind: "framework-default" }];
+};
+
 const resolveDevCommand = (directory: string, manifest: Manifest, name: string): Evidence | null => {
   const scriptName = devScriptNames.find((candidate) => candidate in manifest.scripts);
-  const script = scriptName ? manifest.scripts[scriptName] : undefined;
-  if (scriptName && script) return { value: script, source: `package.json#scripts.${scriptName}` };
+  const script = scriptName === undefined ? undefined : manifest.scripts[scriptName];
+  if (scriptName !== undefined && isPresent(script)) return { value: script, source: `package.json#scripts.${scriptName}` };
   return nxServeTarget(directory, name);
 };
 
@@ -104,16 +110,15 @@ export const detectStack = (root: string, relativeDirectory: string): Stack | nu
   const ports: PortFinding[] = [
     ...scriptFlagPorts(devCommand.value, devCommand.source),
     ...envPorts(directory, prefix),
-    ...(configFile ? sourcePorts(join(directory, configFile), `${prefix}${configFile}`) : []),
+    ...(configFile === null ? [] : sourcePorts(join(directory, configFile), `${prefix}${configFile}`)),
     ...(entry?.ports ?? []),
-    ...(framework?.defaultPort
-      ? [{ port: framework.defaultPort, source: `${framework.name} default`, kind: "framework-default" as const }]
-      : []),
+    ...frameworkDefaultPorts(framework),
   ];
 
   const role: StackRole = framework?.role ?? (entry ? "back" : "unknown");
-  const fallbackOverride: PortOverride = entry?.readsPort ? "env:PORT" : entry?.portEnv ? "env:other" : "manual";
-  const portOverride: PortOverride = entry?.portEnv ? "env:other" : (framework?.override ?? fallbackOverride);
+  const entryPortEnv = isPresent(entry?.portEnv) ? entry.portEnv : null;
+  const fallbackOverride: PortOverride = entry?.readsPort === true ? "env:PORT" : entryPortEnv === null ? "manual" : "env:other";
+  const portOverride: PortOverride = entryPortEnv === null ? (framework?.override ?? fallbackOverride) : "env:other";
   const pinnedFlag = scriptFlagPorts(devCommand.value, devCommand.source)[0];
   const flagWarnings =
     pinnedFlag && !portOverride.includes("flag")

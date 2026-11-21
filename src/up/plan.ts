@@ -40,17 +40,17 @@ const shortName = (name: string): string => name.replace(/^@[^/]+\//, "");
 
 const portlessNames = (root: string): Map<string, string> => {
   const config = readJson(join(root, "portless.json"));
-  const apps = isRecord(config) && isRecord(config["apps"]) ? config["apps"] : {};
+  const apps = isRecord(config) && isRecord(config.apps) ? config.apps : {};
   return new Map(
     Object.entries(apps).flatMap(([directory, app]) =>
-      isRecord(app) && typeof app["name"] === "string" ? [[normalizeDirectory(directory), app["name"]]] : [],
+      isRecord(app) && typeof app.name === "string" ? [[normalizeDirectory(directory), app.name]] : [],
     ),
   );
 };
 
 const baseName = (root: string, fallback: string): string => {
   const manifest = readJson(join(root, "package.json"));
-  const name = isRecord(manifest) && typeof manifest["name"] === "string" ? manifest["name"] : fallback;
+  const name = isRecord(manifest) && typeof manifest.name === "string" ? manifest.name : fallback;
   return shortName(name).toLowerCase();
 };
 
@@ -92,7 +92,7 @@ export const planUp = (
   report: DetectReport,
   branch: string,
   resolveUrl: UrlResolver,
-  nodeOptions: string | undefined = process.env["NODE_OPTIONS"],
+  nodeOptions: string | undefined = process.env.NODE_OPTIONS,
   config: NfpConfig = emptyConfig,
 ): UpPlan => {
   const prefix = worktreePrefix(branch);
@@ -131,7 +131,7 @@ export const planUp = (
     if (role === "front" && firstBack) for (const key of apiUrlKeys(directory)) wired[key] = firstBack.url;
     if (role === "back" && firstFront) for (const key of frontUrlKeys(directory)) wired[key] = firstFront.url;
     const portEnv = app.portEnv ?? stack.portEnv;
-    if (portEnv) wired[portEnv] = portPlaceholder;
+    if (portEnv !== null && portEnv !== "") wired[portEnv] = portPlaceholder;
     const nodeEnv: Record<string, string> = usesNode(stack) ? { NODE_OPTIONS: withPreload(nodeOptions) } : {};
     const extra = Object.fromEntries(
       Object.entries(app.env ?? {}).map(([key, template]) => [

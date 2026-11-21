@@ -6,6 +6,8 @@ import { run } from "../src/cli.ts";
 import { detect } from "../src/detect/index.ts";
 import { T3FileError, mergeScripts, t3SchemaUrl, writeT3Scripts } from "../src/t3/project-file.ts";
 import { t3ScriptsFor } from "../src/t3/scripts.ts";
+import { isRecord, stringField } from "../src/detect/files.ts";
+import { parseRecord } from "./json.ts";
 
 const fixture = (name: string): string => join(import.meta.dir, "fixtures", name);
 const temporary: string[] = [];
@@ -18,11 +20,11 @@ const repoCopy = (name: string): string => {
   return root;
 };
 
-const readT3 = (root: string): { $schema: string; scripts: Record<string, unknown>[]; [key: string]: unknown } =>
-  JSON.parse(readFileSync(join(root, "t3.json"), "utf8")) as {
-    $schema: string;
-    scripts: Record<string, unknown>[];
-  };
+const readT3 = (root: string): { $schema: string | undefined; scripts: Record<string, unknown>[] } => {
+  const file = parseRecord(readFileSync(join(root, "t3.json"), "utf8"));
+  const scripts = Array.isArray(file.scripts) ? file.scripts.filter(isRecord) : [];
+  return { $schema: stringField(file, "$schema"), scripts };
+};
 
 afterEach(() => {
   for (const root of temporary.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -84,7 +86,7 @@ describe("mergeScripts", () => {
   });
 
   test("keeps an existing $schema value", () => {
-    expect(mergeScripts({ $schema: "./schema.json" }, [dev]).file["$schema"]).toBe("./schema.json");
+    expect(mergeScripts({ $schema: "./schema.json" }, [dev]).file.$schema).toBe("./schema.json");
   });
 
   test("rejects a scripts value that is not an array of objects", () => {
@@ -99,7 +101,7 @@ describe("mergeScripts", () => {
 
   test("rejects empty names and unknown icons", () => {
     expect(() => mergeScripts({}, [{ name: " ", command: "x" }])).toThrow(T3FileError);
-    expect(() => mergeScripts({}, [{ ...dev, icon: "rocket" as unknown as "play" }])).toThrow("unknown icon");
+    expect(() => mergeScripts({}, [Object.assign({ ...dev }, { icon: "rocket" })])).toThrow("unknown icon");
   });
 });
 
@@ -141,7 +143,7 @@ describe("nfp t3 scripts", () => {
     expect(result.stdout).toContain("created:");
     const file = readT3(root);
     expect(file.$schema).toBe(t3SchemaUrl);
-    expect(file.scripts.map((script) => script["command"])).toEqual([
+    expect(file.scripts.map((script) => script.command)).toEqual([
       "bunx nfp up",
       "bunx nfp e2e",
       "bunx nfp e2e --hidden",
@@ -157,7 +159,7 @@ describe("nfp t3 scripts", () => {
     const result = run(["t3", "scripts", root, "--json"]);
     expect(result.code).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({ status: "updated", added: ["Dev (portless)", "E2E", "E2E (hidden)"] });
-    expect(readT3(root).scripts.map((script) => script["name"])).toEqual([
+    expect(readT3(root).scripts.map((script) => script.name)).toEqual([
       "Board",
       "Dev (portless)",
       "E2E",
@@ -178,7 +180,7 @@ describe("nfp t3 scripts", () => {
     );
     const result = run(["t3", "scripts", root, "--json"]);
     expect(JSON.parse(result.stdout)).toMatchObject({ removed: ["Ports setup"] });
-    expect(readT3(root).scripts.map((script) => [script["name"], script["command"]])).toEqual([
+    expect(readT3(root).scripts.map((script) => [script.name, script.command])).toEqual([
       ["E2E (Docker)", "my-docker-e2e"],
       ["Dev (portless)", "npx --no nfp up"],
       ["E2E", "npx --no nfp e2e"],

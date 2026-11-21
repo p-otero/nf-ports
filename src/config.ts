@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { stackRoles, type StackRole } from "./detect/types.ts";
+import { isStackRole, stackRoles, type StackRole } from "./detect/types.ts";
 import { isRecord, readText } from "./detect/files.ts";
 
 export type AppConfig = {
@@ -20,7 +20,9 @@ export type NfpConfig = {
   readonly e2e: E2eSettings;
 };
 
-export class ConfigError extends Error {}
+export class ConfigError extends Error {
+  override readonly name = "ConfigError";
+}
 
 const envName = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -50,18 +52,18 @@ const envMap = (value: unknown, where: string): Record<string, string> | undefin
 
 const appConfig = (value: unknown, where: string): AppConfig => {
   if (!isRecord(value)) throw new ConfigError(`${where} must be an object`);
-  const role = value["role"];
-  if (role !== undefined && !stackRoles.includes(role as StackRole)) {
+  const role = value.role;
+  if (role !== undefined && !isStackRole(role)) {
     throw new ConfigError(`${where}.role must be one of ${stackRoles.join(", ")}`);
   }
-  const name = optionalString(value["name"], `${where}.name`);
-  const portEnv = optionalEnvName(value["portEnv"], `${where}.portEnv`);
-  const env = envMap(value["env"], `${where}.env`);
+  const name = optionalString(value.name, `${where}.name`);
+  const portEnv = optionalEnvName(value.portEnv, `${where}.portEnv`);
+  const env = envMap(value.env, `${where}.env`);
   return {
-    ...(name ? { name } : {}),
-    ...(role ? { role: role as StackRole } : {}),
-    ...(portEnv ? { portEnv } : {}),
-    ...(env ? { env } : {}),
+    ...(name === undefined ? {} : { name }),
+    ...(role === undefined ? {} : { role }),
+    ...(portEnv === undefined ? {} : { portEnv }),
+    ...(env === undefined ? {} : { env }),
   };
 };
 
@@ -70,21 +72,25 @@ export const parseConfig = (text: string, file = "nfp.json"): NfpConfig => {
   try {
     raw = JSON.parse(text);
   } catch (error) {
-    throw new ConfigError(`${file} is not valid JSON: ${(error as Error).message}`);
+    throw new ConfigError(`${file} is not valid JSON: ${error instanceof SyntaxError ? error.message : String(error)}`);
   }
   if (!isRecord(raw)) throw new ConfigError(`${file} must contain an object`);
-  const apps = raw["apps"] ?? {};
+  const apps = raw.apps ?? {};
   if (!isRecord(apps)) throw new ConfigError(`${file}: apps must be an object keyed by directory`);
-  const e2e = raw["e2e"] ?? {};
+  const e2e = raw.e2e ?? {};
   if (!isRecord(e2e)) throw new ConfigError(`${file}: e2e must be an object`);
-  const config = optionalString(e2e["config"], "e2e.config");
-  const hiddenEnv = optionalEnvName(e2e["hiddenEnv"], "e2e.hiddenEnv");
-  const env = envMap(e2e["env"], "e2e.env");
+  const config = optionalString(e2e.config, "e2e.config");
+  const hiddenEnv = optionalEnvName(e2e.hiddenEnv, "e2e.hiddenEnv");
+  const env = envMap(e2e.env, "e2e.env");
   return {
     apps: Object.fromEntries(
       Object.entries(apps).map(([directory, value]) => [normalizeDirectory(directory), appConfig(value, `apps.${directory}`)]),
     ),
-    e2e: { ...(config ? { config } : {}), ...(hiddenEnv ? { hiddenEnv } : {}), ...(env ? { env } : {}) },
+    e2e: {
+      ...(config === undefined ? {} : { config }),
+      ...(hiddenEnv === undefined ? {} : { hiddenEnv }),
+      ...(env === undefined ? {} : { env }),
+    },
   };
 };
 

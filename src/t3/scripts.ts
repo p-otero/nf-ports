@@ -1,5 +1,6 @@
 import type { DetectReport } from "../detect/types.ts";
 import type { T3Script } from "./project-file.ts";
+import { isPresent } from "../detect/files.ts";
 
 export type ScriptOptions = {
   readonly bin: string;
@@ -26,7 +27,7 @@ export const t3ScriptsFor = (report: DetectReport, options: ScriptOptions): T3Sc
       icon: "play",
       runOnWorktreeCreate: false,
       stopOnSettle: true,
-      ...(options.previewUrl ? { previewUrl: options.previewUrl, autoOpenPreview: true } : {}),
+      ...(isPresent(options.previewUrl) ? { previewUrl: options.previewUrl, autoOpenPreview: true } : {}),
     },
   ];
   if (report.e2e.length === 0) return scripts;

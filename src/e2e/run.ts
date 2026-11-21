@@ -2,6 +2,7 @@ import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { closeSync, openSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isPresent } from "../detect/files.ts";
 import { packageFile } from "../package.ts";
 import { activeRouteUrls } from "../up/run.ts";
 import type { E2ePlan } from "./plan.ts";
@@ -15,9 +16,11 @@ const quoteForCmd = (argument: string): string =>
 export const desktopCommandLine = (command: readonly string[], log: string): string =>
   `cmd.exe /d /s /c "${command.map(quoteForCmd).join(" ")} > "${log}" 2>&1"`;
 
-const waitForExit = (child: ChildProcess): Promise<number> =>
+const waitForExit = async (child: ChildProcess): Promise<number> =>
   new Promise((resolve) => {
-    child.once("exit", (code) => resolve(code ?? 1));
+    child.once("exit", (code) => {
+      resolve(code ?? 1);
+    });
     child.once("error", (error) => {
       process.stderr.write(`${error.message}\n`);
       resolve(1);
@@ -97,22 +100,24 @@ export const runE2e = async (plan: E2ePlan): Promise<number> => {
     process.stderr.write("--hidden=desktop needs Windows; declare e2e.hiddenEnv in nfp.json and use --hidden=env\n");
     return 2;
   }
-  if (plan.baseUrl && !activeRouteUrls().has(plan.baseUrl.replace(/\/+$/, ""))) {
+  if (isPresent(plan.baseUrl) && !activeRouteUrls().has(plan.baseUrl.replace(/\/+$/, ""))) {
     process.stderr.write(`nothing is serving ${plan.baseUrl}; start nfp up in this worktree first\n`);
     return 1;
   }
   const shown = [
-    plan.baseUrl ? `baseURL ${plan.baseUrl}` : "no front",
+    isPresent(plan.baseUrl) ? `baseURL ${plan.baseUrl}` : "no front",
     plan.hidden ? `hidden: ${plan.hidden === "desktop" ? `desktop ${plan.desktop ?? ""}` : "app env"}` : null,
-    process.env["ELECTRON_OVERRIDE_DIST_PATH"] ? `electron ${process.env["ELECTRON_OVERRIDE_DIST_PATH"]}` : null,
-  ].filter(Boolean);
+    isPresent(process.env.ELECTRON_OVERRIDE_DIST_PATH) ? `electron ${process.env.ELECTRON_OVERRIDE_DIST_PATH}` : null,
+  ].filter((part) => part !== null);
   process.stderr.write(`e2e: ${plan.command.join(" ")}  (${shown.join(", ")})\n`);
 
   if (plan.wrapper) writeFileSync(plan.wrapper.path, plan.wrapper.content);
   const log = join(tmpdir(), `${plan.desktop ?? "nfp-e2e"}-${process.pid}.log`);
   const child = plan.hidden === "desktop" ? runOnHiddenDesktop(plan, log) : runVisible(plan);
   const stopTail = plan.hidden === "desktop" ? tailFile(log) : () => undefined;
-  const stop = (): void => stopTree(child);
+  const stop = (): void => {
+    stopTree(child);
+  };
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
   try {

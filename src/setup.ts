@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { isRecord, stringField } from "./detect/files.ts";
 import { portlessCommand } from "./package.ts";
 import { portless } from "./up/run.ts";
 
@@ -12,9 +13,15 @@ const isWindows = process.platform === "win32";
 const readDoctor = (): Doctor | null => {
   const result = portless(["doctor", "--json"]);
   try {
-    const parsed = JSON.parse(result.stdout) as Partial<Doctor>;
-    if (typeof parsed.stateDir !== "string" || !Array.isArray(parsed.findings)) return null;
-    return { stateDir: parsed.stateDir, findings: parsed.findings };
+    const parsed = JSON.parse(result.stdout) as unknown;
+    const stateDir = stringField(parsed, "stateDir");
+    if (stateDir === undefined || !isRecord(parsed) || !Array.isArray(parsed.findings)) return null;
+    const findings = (parsed.findings as unknown[]).flatMap((finding): Finding[] => {
+      const status = stringField(finding, "status");
+      const message = stringField(finding, "message");
+      return status === undefined || message === undefined ? [] : [{ status, message }];
+    });
+    return { stateDir, findings };
   } catch {
     return null;
   }

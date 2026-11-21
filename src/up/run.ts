@@ -4,6 +4,7 @@ import { StringDecoder } from "node:string_decoder";
 import { loadConfig } from "../config.ts";
 import { portlessCommand } from "../package.ts";
 import { detect } from "../detect/index.ts";
+import { isRecord, stringField } from "../detect/files.ts";
 import { formatBanner, type Launch, planUp, portPlaceholder, type UpPlan } from "./plan.ts";
 
 const isWindows = process.platform === "win32";
@@ -30,35 +31,49 @@ export const currentBranch = (root: string): string => {
   }
 };
 
+export class UpError extends Error {
+  override readonly name = "UpError";
+}
+
 export const resolvePortlessUrl = (name: string, prefix: string): string => {
   const result = portless(["get", name, "--json"], { PORTLESS_PREFIX: prefix });
-  if (result.status !== 0) throw new Error(`portless get ${name} failed: ${result.stderr.trim()}`);
-  const parsed = JSON.parse(result.stdout) as { url?: unknown };
-  if (typeof parsed.url !== "string") throw new Error(`portless get ${name} returned no url`);
-  return parsed.url;
+  if (result.status !== 0) throw new UpError(`portless get ${name} failed: ${result.stderr.trim()}`);
+  const url = stringField(JSON.parse(result.stdout) as unknown, "url");
+  if (url === undefined) throw new UpError(`portless get ${name} returned no url`);
+  return url;
 };
 
 export const planFor = (root: string): UpPlan =>
-  planUp(detect(root), currentBranch(root), resolvePortlessUrl, process.env["NODE_OPTIONS"], loadConfig(root));
+  planUp(detect(root), currentBranch(root), resolvePortlessUrl, process.env.NODE_OPTIONS, loadConfig(root));
 
 export const activeRouteUrls = (): Set<string> => {
   const result = portless(["list", "--json"]);
   if (result.status !== 0) return new Set();
-  const parsed = JSON.parse(result.stdout) as { routes?: { url?: unknown }[] };
+  const parsed = JSON.parse(result.stdout) as unknown;
+  const routes: unknown[] = isRecord(parsed) && Array.isArray(parsed.routes) ? parsed.routes : [];
   return new Set(
-    (parsed.routes ?? []).flatMap((route) => (typeof route.url === "string" ? [route.url.replace(/\/+$/, "")] : [])),
+    routes.flatMap((route) => {
+      const url = stringField(route, "url");
+      return url === undefined ? [] : [url.replace(/\/+$/, "")];
+    }),
   );
 };
 
-const isFree = (port: number): Promise<boolean> =>
+const isFree = async (port: number): Promise<boolean> =>
   new Promise((resolve) => {
     const server = createServer();
-    server.once("error", () => resolve(false));
-    server.listen(port, "127.0.0.1", () => server.close(() => resolve(true)));
+    server.once("error", () => {
+      resolve(false);
+    });
+    server.listen(port, "127.0.0.1", () => {
+      server.close(() => {
+        resolve(true);
+      });
+    });
   });
 
 export const freePort = async (taken: ReadonlySet<number>, attempts = 200): Promise<number> => {
-  if (attempts === 0) throw new Error("no free port between 4000 and 4999");
+  if (attempts === 0) throw new UpError("no free port between 4000 and 4999");
   const port = 4000 + Math.floor(Math.random() * 1000);
   return !taken.has(port) && (await isFree(port)) ? port : freePort(taken, attempts - 1);
 };
@@ -103,8 +118,12 @@ const launch = (entry: Launch, port: number | null): ChildProcess => {
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
-  pipeWithPrefix(child.stdout, entry.name, (line) => process.stdout.write(`${line}\n`));
-  pipeWithPrefix(child.stderr, entry.name, (line) => process.stderr.write(`${line}\n`));
+  pipeWithPrefix(child.stdout, entry.name, (line) => {
+    process.stdout.write(`${line}\n`);
+  });
+  pipeWithPrefix(child.stderr, entry.name, (line) => {
+    process.stderr.write(`${line}\n`);
+  });
   return child;
 };
 
@@ -126,11 +145,20 @@ export const runUp = async (root: string): Promise<number> => {
 
   const ports = await allocatePorts(plan.launches, new Set());
   const children = plan.launches.map((entry, index) => launch(entry, ports[index] ?? null));
-  const stopAll = (): void => children.forEach(stopTree);
+  const stopAll = (): void => {
+    children.forEach(stopTree);
+  };
   process.once("SIGINT", stopAll);
   process.once("SIGTERM", stopAll);
   const codes = await Promise.all(
-    children.map((child) => new Promise<number>((resolve) => child.once("exit", (code) => resolve(code ?? 1)))),
+    children.map(
+      async (child) =>
+        new Promise<number>((resolve) => {
+          child.once("exit", (code) => {
+            resolve(code ?? 1);
+          });
+        }),
+    ),
   );
   stopAll();
   return codes.find((code) => code !== 0) ?? 0;

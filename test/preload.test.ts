@@ -1,27 +1,45 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { execFile } from "node:child_process";
 import { createServer, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { promisify } from "node:util";
 
 const preload = pathToFileURL(join(import.meta.dir, "..", "preload", "localhost-dns.mjs")).href;
 let server: Server;
 let port = 0;
 
 beforeAll(async () => {
-  server = createServer((_request, response) => response.end("lumen"));
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  port = (server.address() as AddressInfo).port;
+  server = createServer((_request, response) => {
+    response.end("lumen");
+  });
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new TypeError("server has no TCP address");
+  port = address.port;
 });
 
 afterAll(() => {
   server.close();
 });
 
-const runNode = (source: string) =>
-  promisify(execFile)("node", ["--import", preload, "--input-type=module", "-e", source], { encoding: "utf8", timeout: 15_000 });
+class NodeRunError extends Error {
+  override readonly name = "NodeRunError";
+}
+
+const runNode = async (source: string): Promise<{ stdout: string; stderr: string }> =>
+  new Promise((resolve, reject) => {
+    execFile(
+      "node",
+      ["--import", preload, "--input-type=module", "-e", source],
+      { encoding: "utf8", timeout: 15_000 },
+      (error, stdout, stderr) => {
+        if (error) reject(new NodeRunError(error.message, { cause: error }));
+        else resolve({ stdout, stderr });
+      },
+    );
+  });
 
 describe("localhost-dns preload", () => {
   test("lets Node fetch reach a *.localhost name on loopback", async () => {

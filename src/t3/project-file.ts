@@ -39,12 +39,12 @@ const validateScript = (script: T3Script): void => {
     throw new T3FileError(`script "${script.name}" needs a non-empty name and command`);
   }
   if (script.icon !== undefined && !t3ScriptIcons.includes(script.icon)) {
-    throw new T3FileError(`script "${script.name}" has an unknown icon "${String(script.icon)}"`);
+    throw new T3FileError(`script "${script.name}" has an unknown icon "${script.icon}"`);
   }
 };
 
 const existingScripts = (file: Record<string, unknown>): Record<string, unknown>[] => {
-  const scripts = file["scripts"];
+  const scripts = file.scripts;
   if (scripts === undefined) return [];
   if (!Array.isArray(scripts) || !scripts.every(isRecord)) {
     throw new T3FileError(`${t3FileName} "scripts" must be an array of objects`);
@@ -53,10 +53,10 @@ const existingScripts = (file: Record<string, unknown>): Record<string, unknown>
 };
 
 const scriptName = (script: Record<string, unknown>): string =>
-  typeof script["name"] === "string" ? script["name"].trim() : "";
+  typeof script.name === "string" ? script.name.trim() : "";
 
 const ownedByNfp = (script: Record<string, unknown>): boolean =>
-  typeof script["command"] === "string" && /(^|\s)nfp\s/.test(script["command"]);
+  typeof script.command === "string" && /(^|\s)nfp\s/.test(script.command);
 
 export const mergeScripts = (
   file: Record<string, unknown>,
@@ -91,7 +91,7 @@ export const mergeScripts = (
     throw new T3FileError(`${t3FileName} allows at most ${t3MaxScripts} scripts; the merge would produce ${merged.length}`);
   }
 
-  const schema = typeof file["$schema"] === "string" ? file["$schema"] : t3SchemaUrl;
+  const schema = typeof file.$schema === "string" ? file.$schema : t3SchemaUrl;
   return { file: { $schema: schema, ...file, scripts: merged }, added, updated, unchanged, removed };
 };
 
@@ -107,7 +107,7 @@ const readProjectFile = (path: string): Record<string, unknown> | null => {
   try {
     parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
   } catch (error) {
-    throw new T3FileError(`${path} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+    throw new T3FileError(`${path} is not valid JSON: ${error instanceof SyntaxError ? error.message : String(error)}`);
   }
   if (!isRecord(parsed)) throw new T3FileError(`${path} must contain a JSON object`);
   return parsed;

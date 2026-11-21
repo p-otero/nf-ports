@@ -1,6 +1,6 @@
 import { basename, dirname, extname, join } from "node:path";
 import type { DetectReport, E2eConfig } from "../detect/types.ts";
-import { readText } from "../detect/files.ts";
+import { isPresent, readText } from "../detect/files.ts";
 import { ConfigError, expandTemplate, type NfpConfig, normalizeDirectory } from "../config.ts";
 import { findLaunch, preloadUrl, type UpPlan } from "../up/plan.ts";
 
@@ -39,8 +39,8 @@ export const hiddenEnvFlag = "NFP_E2E_HIDDEN";
 export const baseUrlEnv = "NFP_BASE_URL";
 
 const pickConfig = (report: DetectReport, config: NfpConfig): E2eConfig => {
-  const wanted = config.e2e.config ? normalizeDirectory(config.e2e.config) : null;
-  if (wanted) {
+  const wanted = isPresent(config.e2e.config) ? normalizeDirectory(config.e2e.config) : null;
+  if (wanted !== null) {
     const found = report.e2e.find((entry) => normalizeDirectory(entry.configFile) === wanted);
     if (!found) throw new ConfigError(`nfp.json e2e.config: ${wanted} is not a detected Playwright or Cypress config`);
     return found;
@@ -78,7 +78,7 @@ export const planE2e = (
   up: UpPlan,
   config: NfpConfig,
   options: E2eOptions,
-  nodeOptions: string | undefined = process.env["NODE_OPTIONS"],
+  nodeOptions: string | undefined = process.env.NODE_OPTIONS,
 ): E2ePlan => {
   const e2e = pickConfig(report, config);
   const configFile = join(report.root, e2e.configFile);
@@ -92,16 +92,16 @@ export const planE2e = (
   const wrapper = needsWrapper ? wrapperFor(configFile) : null;
 
   const hidden: HiddenMode | null =
-    options.hidden === null ? null : options.hidden === "auto" ? (config.e2e.hiddenEnv ? "env" : "desktop") : options.hidden;
+    options.hidden === null ? null : options.hidden === "auto" ? (isPresent(config.e2e.hiddenEnv) ? "env" : "desktop") : options.hidden;
 
   const urlEnv: Record<string, string> = {};
-  if (baseUrl) {
+  if (isPresent(baseUrl)) {
     urlEnv[baseUrlEnv] = baseUrl;
-    if (e2e.baseUrlEnv) urlEnv[e2e.baseUrlEnv] = baseUrl;
-    if (e2e.runner === "cypress") urlEnv["CYPRESS_BASE_URL"] = baseUrl;
+    if (isPresent(e2e.baseUrlEnv)) urlEnv[e2e.baseUrlEnv] = baseUrl;
+    if (e2e.runner === "cypress") urlEnv.CYPRESS_BASE_URL = baseUrl;
   }
   const hiddenEnv: Record<string, string> =
-    hidden === null ? {} : { [hiddenEnvFlag]: "1", ...(config.e2e.hiddenEnv ? { [config.e2e.hiddenEnv]: "1" } : {}) };
+    hidden === null ? {} : { [hiddenEnvFlag]: "1", ...(isPresent(config.e2e.hiddenEnv) ? { [config.e2e.hiddenEnv]: "1" } : {}) };
   const lookup = (reference: string): string | null => findLaunch(up, reference)?.url ?? null;
   const extra = Object.fromEntries(
     Object.entries(config.e2e.env ?? {}).map(([key, template]) => [

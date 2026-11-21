@@ -1,6 +1,8 @@
 export const stackRoles = ["front", "back", "unknown"] as const;
 export type StackRole = (typeof stackRoles)[number];
 
+export const isStackRole = (value: unknown): value is StackRole => stackRoles.some((role) => role === value);
+
 export type Evidence = {
   readonly value: string;
   readonly source: string;

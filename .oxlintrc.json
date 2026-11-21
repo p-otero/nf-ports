@@ -1,6 +1,10 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "extends": ["./node_modules/@p-otero/oxlint-rules/presets/base.json"],
+  "extends": [
+    "./node_modules/@p-otero/oxlint-rules/presets/base.json",
+    "./node_modules/@p-otero/oxlint-rules/presets/typescript-strict.json"
+  ],
   "jsPlugins": ["./node_modules/@p-otero/oxlint-rules/dist/plugin.js"],
+  "options": { "typeAware": true },
   "ignorePatterns": ["node_modules", "test/fixtures"]
 }

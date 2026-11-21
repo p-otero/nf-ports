@@ -2,12 +2,17 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { run } from "../src/cli.ts";
 import { detect } from "../src/detect/index.ts";
+import { parseRecord } from "./json.ts";
+
+class FixtureError extends Error {
+  override readonly name = "FixtureError";
+}
 
 const fixture = (name: string): string => join(import.meta.dir, "fixtures", name);
 
 const stackNamed = (root: string, name: string) => {
   const stack = detect(root).stacks.find((candidate) => candidate.name === name);
-  if (!stack) throw new Error(`stack ${name} not detected`);
+  if (!stack) throw new FixtureError(`stack ${name} not detected`);
   return stack;
 };
 
@@ -128,8 +133,7 @@ describe("cli", () => {
   test("prints JSON with --json", () => {
     const result = run(["detect", fixture("lumen-notes"), "--json"]);
     expect(result.code).toBe(0);
-    const parsed = JSON.parse(result.stdout) as { stacks: unknown[] };
-    expect(parsed.stacks).toHaveLength(2);
+    expect(parseRecord(result.stdout).stacks).toHaveLength(2);
   });
 
   test("prints a text report", () => {

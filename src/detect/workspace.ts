@@ -1,17 +1,17 @@
 import { existsSync } from "node:fs";
 import { join, relative } from "node:path";
 import type { DetectReport, Orchestrator } from "./types.ts";
-import { isDirectory, isRecord, listDirectories, readJson, readText, toPosix } from "./files.ts";
+import { isDirectory, isPresent, isRecord, listDirectories, readJson, readText, toPosix } from "./files.ts";
 
 const workspacePatterns = (root: string): string[] => {
   const manifest = readJson(join(root, "package.json"));
-  const fromManifest = isRecord(manifest) ? manifest["workspaces"] : undefined;
-  const list = isRecord(fromManifest) ? fromManifest["packages"] : fromManifest;
+  const fromManifest = isRecord(manifest) ? manifest.workspaces : undefined;
+  const list = isRecord(fromManifest) ? fromManifest.packages : fromManifest;
   const patterns = Array.isArray(list) ? list.filter((item): item is string => typeof item === "string") : [];
   const pnpm = readText(join(root, "pnpm-workspace.yaml"));
-  if (pnpm) {
+  if (isPresent(pnpm)) {
     for (const match of pnpm.matchAll(/^\s*-\s*['"]?([^'"\n#]+?)['"]?\s*$/gm)) {
-      if (match[1]) patterns.push(match[1]);
+      if (isPresent(match[1])) patterns.push(match[1]);
     }
   }
   return patterns;
@@ -32,7 +32,7 @@ export const findPackageDirectories = (root: string): string[] => {
 
 export const detectPackageManager = (root: string): DetectReport["packageManager"] => {
   const manifest = readJson(join(root, "package.json"));
-  const declared = isRecord(manifest) ? manifest["packageManager"] : undefined;
+  const declared = isRecord(manifest) ? manifest.packageManager : undefined;
   if (typeof declared === "string") {
     const name = declared.split("@")[0];
     if (name === "bun" || name === "pnpm" || name === "yarn" || name === "npm") return name;
@@ -54,8 +54,8 @@ export const detectOrchestrators = (root: string): Orchestrator[] => {
 export const readProcfile = (root: string): { name: string; command: string; source: string }[] => {
   const file = existsSync(join(root, "Procfile.dev")) ? "Procfile.dev" : "Procfile";
   const text = readText(join(root, file));
-  if (!text) return [];
+  if (!isPresent(text)) return [];
   return [...text.matchAll(/^([A-Za-z0-9_-]+):\s*(.+?)\s*$/gm)].flatMap((match) =>
-    match[1] && match[2] ? [{ name: match[1], command: match[2], source: file }] : [],
+    isPresent(match[1]) && isPresent(match[2]) ? [{ name: match[1], command: match[2], source: file }] : [],
   );
 };
