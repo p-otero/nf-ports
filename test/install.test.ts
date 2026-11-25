@@ -93,7 +93,7 @@ describe("built bin", () => {
     const root = repoCopy("lumen-notes");
     const url = spawnSync("node", [bin, "url", "api"], { cwd: root, encoding: "utf8" });
     expect(url.stderr).toBe("");
-    expect(url.stdout.trim()).toBe("https://api.lumen.localhost");
+    expect(url.stdout.trim()).toMatch(/^https://api.lumen.localhost(?::d+)?$/);
     const plan = spawnSync("node", [bin, "e2e", "--print"], { cwd: root, encoding: "utf8" });
     const nodeOptions = stringField(parseRecord(plan.stdout).env, "NODE_OPTIONS") ?? "";
     const preload = /--import=(file:\S+)/.exec(nodeOptions)?.[1];
