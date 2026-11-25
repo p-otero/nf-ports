@@ -10,6 +10,14 @@
     "t3code"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/p-otero/nf-ports.git"
+  },
+  "homepage": "https://github.com/p-otero/nf-ports#readme",
+  "bugs": {
+    "url": "https://github.com/p-otero/nf-ports/issues"
+  },
   "type": "module",
   "bin": {
     "nfp": "dist/bin.js"
